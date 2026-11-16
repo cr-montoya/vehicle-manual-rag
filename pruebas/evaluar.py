@@ -9,7 +9,7 @@ Para cada caso revisa cuatro cosas:
 
 Invoca la Lambda directo (con tus credenciales de AWS), sin pasar por CloudFront.
 
-Uso (desde fase0-manuales/):
+Uso (desde la raíz del repo):
     uv run --project infra python pruebas/evaluar.py
 """
 
