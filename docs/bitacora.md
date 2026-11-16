@@ -37,7 +37,7 @@ Quoted model answers and log messages are translated from Spanish; the original 
 ## 1. No access to Anthropic models in the account
 
 - **Symptom:** the initial plan used Claude as the generator, but the account had no access to Anthropic models.
-- **Cause:** third-party models need to be enabled and are billed through AWS Marketplace; AWS credits may not cover them `[to verify]`.
+- **Cause:** Anthropic model access was not enabled on the account, and it was not confirmed whether the account's AWS credits would cover third-party models, so the build stayed on AWS's own models.
 - **Fix:** Amazon Nova 2 Lite as the generator and Nova Lite as the parser. They are AWS models: they read images, they are cheap and credits cover them. Nova 2 Lite is invoked through the `us.amazon.nova-2-lite-v1:0` inference profile, because it does not support direct invocation in the region.
 - **Lesson:** the model is a replaceable part if the rest of the design does not depend on it.
 
@@ -88,13 +88,13 @@ Quoted model answers and log messages are translated from Spanish; the original 
 - **Symptom:** to "how often do I change the oil?" the assistant answered, correctly, that it could not find it.
 - **Cause:** the default parser only extracts text. The maintenance chart row came out as `Aceite de motor / Cambiar / √√√√√√` ("Engine oil / Change / √√√√√√"): the check marks lost their kilometer column. **No chunking or embedding can recover what the parser already lost.**
 - **Fix:** parsing with a vision model (Nova Lite), which reads each page as an image and transcribes tables to Markdown.
-- **Cost:** tokens per page, only at ingestion; less than one dollar per full ingestion `[to verify in Cost Explorer]`. The README [cost estimate](../README.md#costs) puts it at about USD 0.26 at list price.
+- **Cost:** tokens per page, only at ingestion; the README [cost estimate](../README.md#costs) puts it at about USD 0.26 per full ingestion at list price. Not yet confirmed against Cost Explorer.
 - **Lesson:** parsing is the most underestimated decision in a RAG.
 
 ## 9. Changing the parser did not guarantee reprocessing
 
 - **Symptom:** `cdk diff` showed that the data source would be updated in place.
-- **Cause:** with the same PDFs, ingestion could consider them "unchanged" and skip them `[to verify]`. Also, the old data source had a `RETAIN` policy: its vectors would have stayed alive.
+- **Cause:** [syncing is incremental](https://docs.aws.amazon.com/bedrock/latest/userguide/kb-data-source-sync-ingest.html): when a document has no content or metadata changes, the sync skips it. With the same PDFs, a parser change alone would not reprocess them. Also, the old data source had a `RETAIN` policy: its vectors would have stayed alive.
 - **Fix:** a new data source with a versioned logical ID (`FuenteDatosV2`) and a `DELETE` policy. When it is replaced, the old one is deleted with its vectors.
 - **Lesson:** changing how knowledge is processed forces reprocessing all of it, and it is best to force it explicitly.
 
@@ -108,7 +108,7 @@ Quoted model answers and log messages are translated from Spanish; the original 
 ## 11. Token metrics showed 0
 
 - **Symptom:** the `AWS/Bedrock` token metrics showed 0 for Nova Lite and Titan after a full ingestion.
-- **Cause:** the calls the knowledge base makes internally during ingestion do not show up as account invocations in those metrics `[to verify]`.
+- **Cause:** not confirmed. The working hypothesis is that the model calls the knowledge base makes during ingestion are not published as account invocations in those metrics, but no AWS documentation was found that states this.
 - **Fix:** measure the real cost in Cost Explorer (with a one-day delay) and cover the risk with the AWS Budgets budget.
 - **Lesson:** know where each number comes from before promising it can be measured.
 
@@ -186,7 +186,7 @@ Quoted model answers and log messages are translated from Spanish; the original 
 - **What was measured:**
   - The same question **in English** does not retrieve that page either, so the language is not the cause.
   - Asking for up to 100 chunks from that manual returns 58 chunks starting on 50 different pages. **10 pages have no chunk at all**, including the one with the oil specification.
-  - Also, the search returns fewer chunks than requested (3 or 4 out of 8) `[cause to verify]`.
+  - Also, the search returns fewer chunks than requested (3 or 4 out of 8). The cause is not yet known.
 - **Possible causes, to be confirmed:** the vision parser returned empty output for image-heavy pages, or the text of those pages ended up inside a chunk that starts on the previous page.
 - **Pending:** review the parser output per page and, if confirmed, raise the number of retrieved chunks and validate during ingestion that every page produces text.
 - **Lesson:** an ingestion that says "6 of 6 documents indexed" does not mean **every page** is in the index. Measure coverage per page.
@@ -214,4 +214,4 @@ Quoted model answers and log messages are translated from Spanish; the original 
 
 ---
 
-**Note on page numbers `[to verify]`:** each chunk is tagged with the page where it **starts**. If it starts at the end of a page, the citation can land one page before the value (in one case, the citation said 50 and the value is on page 51 of the PDF viewer). That is why the golden set accepts a one-page difference.
+**Note on page numbers (observed in this corpus, not taken from AWS documentation):** each chunk carries a single page number (`x-amz-bedrock-kb-document-page-number`), and it matches the page where the chunk **starts**. If it starts at the end of a page, the citation can land one page before the value (in one case, the citation said 50 and the value is on page 51 of the PDF viewer). That is why the golden set accepts a one-page difference.

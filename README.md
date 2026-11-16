@@ -122,7 +122,7 @@ Criteria, in order of weight: (1) never answer from the wrong manual, (2) tracea
 | Decision | Chosen | Ruled out | Why |
 | --- | --- | --- | --- |
 | RAG | Amazon Bedrock Knowledge Bases | Custom pipeline (LangChain) | Less code and operations; the pipeline becomes configuration |
-| Vector store | **Amazon S3 Vectors** | Amazon OpenSearch Serverless | OpenSearch Serverless charges a monthly minimum even when idle `[to verify]`; S3 Vectors charges per use |
+| Vector store | **Amazon S3 Vectors** | Amazon OpenSearch Serverless | OpenSearch Serverless bills compute in OCU-hours (USD 0.24 per OCU-hour in us-east-1, about USD 175 per month for each OCU kept running), and any [minimum capacity](https://docs.aws.amazon.com/opensearch-service/latest/developerguide/serverless-scaling.html) above 0 is billed even when idle. S3 Vectors bills only storage, writes and queries |
 | Parser | **Nova Lite (vision model)** | Default parser (text only) | The default parser loses the columns of the maintenance tables. Cost: tokens per page, only at ingestion |
 | Generator | **Nova 2 Lite** | Claude; Nova Pro | Reads images, is cheap and is covered by AWS credits. Nova Pro was tried against the golden set: it did not improve and it attributed a chain lubrication value to the engine oil, so it was reverted |
 | Vehicle filter | Metadata on each chunk, filter before searching | One index per vehicle | A single index scales; the filter guarantees no other manual gets in |
@@ -425,7 +425,7 @@ The manuals are copyrighted by their manufacturers. Being free to download does 
 | Nissan Frontier (2023) | Official Nissan Mexico website |
 | Yamaha XTZ125 and XTZ250 | Official Incolmotos Yamaha (Colombia) website |
 | Bajaj Pulsar NS125 | Official Bajaj Auto website (distributed in Colombia by Auteco) |
-| BYD Seagull | Official BYD website (Morocco edition; sold in Colombia as Dolphin Mini `[to verify]`) |
+| BYD Seagull | Official BYD website (Morocco edition; the same model is sold in Colombia as [BYD Seagull](https://www.elcarrocolombiano.com/novedades/byd-seagull-2026-colombia-actualizado-entrega-inmediata-precios-y-datos/)) |
 
 This is an educational demo: it does not replace the manual or an inspection by a mechanic.
 
