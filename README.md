@@ -12,7 +12,7 @@ Ask "how often do I change the oil?" or upload a photo of the dashboard ("what d
 ![Architecture](docs/arquitectura.png)
 
 > Solid line: each question. Dotted line: manual ingestion. Pink: alerts.
-> Editable diagram: [`docs/arquitectura.drawio`](docs/arquitectura.drawio) (draw.io). The step-by-step flow is in [How it works](#how-it-works).
+> Editable diagram: [`docs/arquitectura.drawio`](docs/arquitectura.drawio) (draw.io). The step-by-step flow is in [How it works](#how-it-works). To regenerate the PNGs, see [`docs/README.md`](docs/README.md).
 
 > **Versión en español.** La app responde en español y está pensada para personas en Colombia; por eso la interfaz, los prompts, el set de pruebas y los comentarios del código están en español. La documentación está en inglés. La última versión de este README en español está en el [historial del repositorio](https://github.com/cr-montoya/vehicle-manual-rag/blob/2fa7006/README.md).
 
@@ -225,8 +225,9 @@ The first version exposed the Lambda Function URL publicly. Now CloudFront is th
     ├── bitacora.md               Engineering log: problems found and how they were solved
     ├── arquitectura.drawio       Editable architecture diagram
     ├── arquitectura.png          Architecture diagram for this README
-    ├── flujo-rag.excalidraw      Hand-drawn flow: deploy, ingestion, question (editable)
-    └── flujo-rag.png             The same flow, for this README
+    ├── flujo-rag.drawio          Flow: deploy, ingestion, question (editable)
+    ├── flujo-rag.png             The same flow, for this README
+    └── README.md                 How to regenerate the diagram PNGs
 ```
 
 ---
