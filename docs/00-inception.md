@@ -1,57 +1,59 @@
-# Inception Fase 0: asistente de manuales de vehículos
+# Phase 0 inception: vehicle manual assistant
 
-AI-DLC: la IA propone y pregunta, el humano decide. Se valida antes de escribir código. Alcance: uno o dos bloques de 90 minutos.
+AI-DLC: the AI proposes and asks, the human decides. Everything is validated before writing code. Scope: one or two 90-minute blocks.
 
-## 1. Intención
+> This is the original planning document, kept as written at the time (translated to English). Some decisions changed during the build: the generator is Amazon Nova 2 Lite instead of Claude Haiku (see problem 1 and problem 23 in the [engineering log](bitacora.md)), the PDFs are parsed with a vision model, and the corpus uses real manufacturer manuals that are downloaded, not redistributed.
 
-Que una persona no técnica pregunte por su moto o su carro ("¿cada cuánto cambio el aceite?", o una foto del tablero: "¿qué significa esta luz?") y reciba lo que dice el manual de **ese** vehículo, con la página citada. Si el tema es de seguridad (frenos, temperatura, aceite), la respuesta termina con "llévalo al taller".
+## 1. Intent
 
-## 2. Criterios (en orden de peso)
+A non-technical person asks about their motorcycle or car ("how often do I change the oil?", or a photo of the dashboard: "what does this light mean?") and gets what the manual of **that** vehicle says, with the page cited. If the topic is safety related (brakes, temperature, oil), the answer ends with "take it to a mechanic".
 
-1. **No responder con el manual equivocado.** Es el riesgo principal.
-2. **Respuesta trazable:** siempre con cita de documento y página, o "no está en el manual".
-3. **Usable desde el celular** por alguien no técnico.
-4. **Costo cercano a cero y destruible** con `cdk destroy`.
+## 2. Criteria (in order of weight)
 
-## 3. Escalón de autonomía
+1. **Never answer from the wrong manual.** This is the main risk.
+2. **Traceable answer:** always with a document and page citation, or "it is not in the manual".
+3. **Usable from a phone** by a non-technical person.
+4. **Near-zero cost and destroyable** with `cdk destroy`.
 
-**Escalón 2: RAG**, con una llamada multimodal para leer la foto. No hace falta agente: no hay acciones ni un camino que dependa del caso. Alternativa descartada: un agente con herramientas (escalón 4). Ese escalón suma latencia y riesgo sin aportar valor aquí.
+## 3. Autonomy level
 
-## 4. Diseño propuesto (la decisión es del humano)
+**Level 2: RAG**, with one multimodal call to read the photo. No agent is needed: there are no actions and no path that depends on the case. Rejected alternative: an agent with tools (level 4). That level adds latency and risk without adding value here.
 
-| Pieza | Propuesta | Alternativa descartada y por qué |
+## 4. Proposed design (the human decides)
+
+| Component | Proposal | Rejected alternative and why |
 | --- | --- | --- |
-| Fuente | S3 con un `.metadata.json` por PDF: `tipo`, `marca`, `modelo`, `anio` | Un índice por vehículo: no escala y duplica infraestructura |
-| RAG | Bedrock Knowledge Base | Pipeline propio con LangChain: más código y operación |
-| Vector store | **S3 Vectors** (GA desde diciembre de 2025, integrado con Knowledge Bases) | OpenSearch Serverless: tiene un piso de unos USD 170 al mes `[verificar]`, injustificado para 3 PDF |
-| Embeddings | Titan Text Embeddings V2 | Cohere: no aporta para 3 documentos |
-| Generador | **Claude Haiku 5.5** (visión, rapidez, costo); escalar a Sonnet 5.5 solo si el set dorado muestra que lee mal las fotos | Sonnet de entrada: más caro sin evidencia de que haga falta |
-| Seguridad | Bedrock Guardrails básico: temas fuera de alcance y prompt injection | Sin guardrail: alguien no técnico lo usará con preguntas libres |
-| Interfaz | Página web mínima (S3 y CloudFront) con una Lambda detrás: selector de vehículo, texto y foto | Streamlit en un servidor: hay que operarlo y no es serverless |
-| Acceso | Enlace compartido con límite de uso (throttling) y una alarma de presupuesto | Cognito: excesivo para una demo de un día |
+| Source | S3 with one `.metadata.json` per PDF: `tipo`, `marca`, `modelo`, `anio` (type, make, model, year) | One index per vehicle: does not scale and duplicates infrastructure |
+| RAG | Amazon Bedrock Knowledge Base | Custom pipeline with LangChain: more code and operations |
+| Vector store | **Amazon S3 Vectors** (GA since December 2025, integrated with Knowledge Bases) | Amazon OpenSearch Serverless: has a floor of about USD 170 per month `[to verify]`, unjustified for 3 PDFs |
+| Embeddings | Amazon Titan Text Embeddings V2 | Cohere: adds nothing for 3 documents |
+| Generator | **Claude Haiku 5.5** (vision, speed, cost); move up to Sonnet 5.5 only if the golden set shows it misreads photos | Sonnet from the start: more expensive with no evidence it is needed |
+| Safety | Basic Amazon Bedrock Guardrails: out-of-scope topics and prompt injection | No guardrail: a non-technical person will use it with free-form questions |
+| Interface | Minimal web page (S3 and CloudFront) with a Lambda function behind it: vehicle selector, text and photo | Streamlit on a server: it has to be operated and is not serverless |
+| Access | Shared link with a usage limit (throttling) and a budget alarm | Amazon Cognito: excessive for a one-day demo |
 
-**Flujo:** el usuario elige su vehículo, o lo dice en el texto. Sin vehículo identificado, el sistema pregunta antes de responder. Con vehículo, la búsqueda se filtra por `marca`, `modelo` y `anio` antes de comparar vectores. Si hay foto, Haiku la describe primero ("testigo de presión de aceite") y esa descripción se usa como consulta. La respuesta lleva la cita y, si el tema es de seguridad, la advertencia del taller.
+**Flow:** the user picks their vehicle, or names it in the text. With no identified vehicle, the system asks before answering. With a vehicle, the search is filtered by `marca`, `modelo` and `anio` before comparing vectors. If there is a photo, Haiku describes it first ("oil pressure warning light") and that description is used as the query. The answer includes the citation and, if the topic is safety related, the mechanic warning.
 
-## 5. Supuestos
+## 5. Assumptions
 
-| Supuesto | Si no fuera así, cambia |
+| Assumption | If it turns out false, this changes |
 | --- | --- |
-| Cuenta personal con créditos de AWS en us-east-1 | La región y los IDs de modelo |
-| Los PDF tienen texto extraíble, no son escaneos | Habría que agregar parsing con un modelo fundacional o Textract en la ingesta |
-| La cita de página sale de los metadatos de ubicación que devuelve la Knowledge Base `[verificar en la prueba]` | Se divide cada PDF por página antes de ingerirlo |
-| La regla "llévalo al taller" vive en el prompt, más una lista de palabras clave en la Lambda | Se mueve a una regla determinista en código, fuera del modelo (así quedó implementado) |
+| Personal account with AWS credits in us-east-1 | The region and the model IDs |
+| The PDFs have extractable text, they are not scans | Parsing with a foundation model or Amazon Textract would be needed at ingestion |
+| The page citation comes from the location metadata the knowledge base returns `[to verify in testing]` | Each PDF is split by page before ingestion |
+| The "take it to a mechanic" rule lives in the prompt, plus a keyword list in the Lambda function | It moves to a deterministic rule in code, outside the model (this is how it was implemented) |
 
-## 6. Criterios de aceptación: set dorado de 10 preguntas
+## 6. Acceptance criteria: a golden set of 10 questions
 
-- **6 preguntas de texto con respuesta en el manual**, como intervalo de aceite, presión de llantas o capacidad del tanque. Pasan si la cita apunta a la página correcta.
-- **2 fotos del tablero.** Pasan si identifican el testigo y responden con cita y con la advertencia de seguridad.
-- **Trampa 1, vehículo equivocado:** se pregunta por la moto con el carro seleccionado. Pasa si no responde con el otro manual.
-- **Trampa 2, fuera de los manuales:** por ejemplo, "¿cuánto cuesta el seguro?". Pasa si responde "no está en el manual".
+- **6 text questions answered in the manual**, such as oil interval, tire pressure or fuel tank capacity. They pass if the citation points to the right page.
+- **2 dashboard photos.** They pass if they identify the warning light and answer with a citation and the safety warning.
+- **Trap 1, wrong vehicle:** ask about the motorcycle with the car selected. Passes if it does not answer from the other manual.
+- **Trap 2, outside the manuals:** for example, "how much does insurance cost?". Passes if it answers "it is not in the manual".
 
-Umbral propuesto: 9 de 10, con las 2 trampas obligatorias `[decidir]`.
+Proposed threshold: 9 out of 10, with both traps required `[to decide]`.
 
-## 7. Preguntas abiertas para el humano
+## 7. Open questions for the human
 
-1. **Corpus:** ¿manuales reales o ficticios? Los manuales oficiales de los fabricantes tienen derechos de autor, y no encontré una licencia que permita usarlos en una demo `[verificar en el sitio de cada fabricante]`. Los ficticios se pueden mostrar y versionar sin ese riesgo.
-2. ¿Umbral de 9 de 10?
-3. ¿Haiku 5.5 como generador inicial?
+1. **Corpus:** real or fictional manuals? Official manufacturer manuals are copyrighted, and I did not find a license that allows using them in a demo `[to verify on each manufacturer's site]`. Fictional ones can be shown and versioned without that risk.
+2. Threshold of 9 out of 10?
+3. Haiku 5.5 as the initial generator?

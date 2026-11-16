@@ -1,215 +1,217 @@
-# Bitácora de problemas y soluciones
+# Engineering log: problems and fixes
 
-Todo lo que salió mal construyendo esta app, en el orden en que pasó: qué se vio, por qué pasó, cómo se resolvió y qué se aprendió. Los errores de diagnóstico también están, porque enseñan tanto como los errores del sistema.
+Everything that went wrong while building this app, in the order it happened: what was seen, why it happened, how it was fixed and what was learned. The diagnosis mistakes are here too, because they teach as much as the system errors.
 
-## Resumen
+Quoted model answers and log messages are translated from Spanish; the original Spanish text is in the code and in [`pruebas/resultados.md`](../pruebas/resultados.md).
 
-| # | Problema | Tipo | Estado |
+## Summary
+
+| # | Problem | Type | Status |
 | --- | --- | --- | --- |
-| 1 | Sin acceso a modelos de Anthropic en la cuenta | Plataforma | Resuelto: Amazon Nova |
-| 2 | `aws-cdk-lib` no instala en Python 3.9 | Entorno | Resuelto: uv con Python 3.12 |
-| 3 | Manuales con texto ilegible o enlaces que no son PDF | Datos | Resuelto: corpus verificado |
-| 4 | La cuenta bloquea buckets públicos | Seguridad | Resuelto: CloudFront con OAC |
-| 5 | Un `cdk deploy` detenido siguió desplegando | Herramientas | Resuelto |
-| 6 | Reorganizar el código obligó a destruir la pila | IaC | Resuelto |
-| 7 | `aws login` no funciona con boto3 | Entorno | Resuelto: `boto3[crt]` |
-| 8 | Las tablas de mantenimiento perdían sus columnas | RAG: parsing | Resuelto: parser con visión |
-| 9 | Cambiar el parser no garantizaba reprocesar | RAG: ingesta | Resuelto: fuente de datos nueva |
-| 10 | La ingesta tardaba más de 30 minutos | Operación | Explicado: cuota, no costo |
-| 11 | Las métricas de tokens marcaban 0 | Costos | Explicado |
-| 12 | **El parser inventó una tabla en la página del índice** | RAG: alucinación | Resuelto: prompt sin ejemplos |
-| 13 | La Lambda era alcanzable sin pasar por CloudFront | Seguridad | Resuelto: OAC y `AWS_IAM` |
-| 14 | La demo quedaba expuesta de noche | Seguridad | Resuelto: interruptor y geo |
-| 15 | El aviso de "llévalo al taller" salía de más | Producto | Resuelto: reglas por síntomas |
-| 16 | Una versión de guardrail que no se actualiza sola | IaC | Resuelto |
-| 17 | **Diagnóstico equivocado:** un dato "inventado" que sí estaba | Proceso | Corregido |
-| 18 | **Ninguna alarma llegaba a Slack** | Observabilidad | Resuelto: política de SNS |
-| 19 | El set dorado no pasa: 8 de 10 | Evaluación | Abierto |
-| 20 | Respuesta respaldada pero incompleta | RAG: generación | Abierto: la instrucción no bastó |
-| 21 | **Páginas del manual que nunca llegaron al índice** | RAG: ingesta | Abierto: causa por confirmar |
-| 22 | Un "no encontré" dicho con otras palabras pasaba como respuesta | Producto | Resuelto: sin citas = no encontrado |
-| 23 | **Un modelo más capaz respondió peor** | Modelo | Revertido a Nova 2 Lite |
+| 1 | No access to Anthropic models in the account | Platform | Solved: Amazon Nova |
+| 2 | `aws-cdk-lib` does not install on Python 3.9 | Environment | Solved: uv with Python 3.12 |
+| 3 | Manuals with unreadable text or links that are not PDFs | Data | Solved: verified corpus |
+| 4 | The account blocks public buckets | Security | Solved: CloudFront with OAC |
+| 5 | A stopped `cdk deploy` kept deploying | Tooling | Solved |
+| 6 | Reorganizing the code forced a stack teardown | IaC | Solved |
+| 7 | `aws login` does not work with boto3 | Environment | Solved: `boto3[crt]` |
+| 8 | Maintenance tables lost their columns | RAG: parsing | Solved: vision parser |
+| 9 | Changing the parser did not guarantee reprocessing | RAG: ingestion | Solved: new data source |
+| 10 | Ingestion took more than 30 minutes | Operations | Explained: quota, not cost |
+| 11 | Token metrics showed 0 | Costs | Explained |
+| 12 | **The parser invented a table on the index page** | RAG: hallucination | Solved: prompt without examples |
+| 13 | The Lambda function was reachable without going through CloudFront | Security | Solved: OAC and `AWS_IAM` |
+| 14 | The demo stayed exposed overnight | Security | Solved: switch and geo restriction |
+| 15 | The "take it to a mechanic" warning showed up too often | Product | Solved: symptom-based rules |
+| 16 | A guardrail version that does not update itself | IaC | Solved |
+| 17 | **Wrong diagnosis:** an "invented" value that was actually there | Process | Corrected |
+| 18 | **No alarm reached Slack** | Observability | Solved: SNS policy |
+| 19 | The golden set does not pass: 8 out of 10 | Evaluation | Open |
+| 20 | Supported but incomplete answer | RAG: generation | Open: the instruction was not enough |
+| 21 | **Manual pages that never reached the index** | RAG: ingestion | Open: cause to be confirmed |
+| 22 | A "not found" phrased differently passed as an answer | Product | Solved: no citations = not found |
+| 23 | **A more capable model answered worse** | Model | Reverted to Nova 2 Lite |
 
 ---
 
-## 1. Sin acceso a modelos de Anthropic en la cuenta
+## 1. No access to Anthropic models in the account
 
-- **Síntoma:** el plan inicial usaba Claude como generador, pero la cuenta no tenía acceso a modelos de Anthropic.
-- **Causa:** los modelos de terceros requieren habilitación y se cobran por AWS Marketplace; los créditos de AWS pueden no cubrirlos `[verificar]`.
-- **Solución:** Amazon Nova 2 Lite como generador y Nova Lite como parser. Son modelos de AWS: leen imágenes, son baratos y los cubren los créditos. Nova 2 Lite se invoca con el perfil de inferencia `us.amazon.nova-2-lite-v1:0`, porque no admite invocación directa en la región.
-- **Lección:** el modelo es una pieza reemplazable si el resto del diseño no depende de él.
+- **Symptom:** the initial plan used Claude as the generator, but the account had no access to Anthropic models.
+- **Cause:** third-party models need to be enabled and are billed through AWS Marketplace; AWS credits may not cover them `[to verify]`.
+- **Fix:** Amazon Nova 2 Lite as the generator and Nova Lite as the parser. They are AWS models: they read images, they are cheap and credits cover them. Nova 2 Lite is invoked through the `us.amazon.nova-2-lite-v1:0` inference profile, because it does not support direct invocation in the region.
+- **Lesson:** the model is a replaceable part if the rest of the design does not depend on it.
 
-## 2. `aws-cdk-lib` no instala en Python 3.9
+## 2. `aws-cdk-lib` does not install on Python 3.9
 
-- **Síntoma:** `pip` solo encontraba versiones viejas de `aws-cdk-lib`.
-- **Causa:** las versiones recientes exigen Python 3.10 o superior, y el sistema tenía 3.9.
-- **Solución:** [uv](https://docs.astral.sh/uv/) con Python 3.12 gestionado por uv, sin tocar el Python del sistema. El proyecto vive en `infra/pyproject.toml` con `uv.lock`.
-- **Lección:** fijar la versión del intérprete en el proyecto, no depender de la del equipo.
+- **Symptom:** `pip` only found old versions of `aws-cdk-lib`.
+- **Cause:** recent versions require Python 3.10 or later, and the system had 3.9.
+- **Fix:** [uv](https://docs.astral.sh/uv/) with a uv-managed Python 3.12, without touching the system Python. The project lives in `infra/pyproject.toml` with `uv.lock`.
+- **Lesson:** pin the interpreter version in the project; do not depend on the one on the machine.
 
-## 3. Manuales con texto ilegible o enlaces que no son PDF
+## 3. Manuals with unreadable text or links that are not PDFs
 
-- **Síntoma:** algunos enlaces de manuales devolvían una página web en vez de un PDF, y los manuales de otra marca se extraían como caracteres sin sentido.
-- **Causa:** sitios que responden con la aplicación web para cualquier ruta, y PDF con fuentes sin mapeo de caracteres.
-- **Solución:** antes de aceptar un manual, se verifica que la descarga sea `application/pdf` y que el texto extraído contenga palabras esperadas (por ejemplo, "aceite"). Se descartaron los que no pasaron.
-- **Lección:** validar la calidad de los datos **antes** de ingerirlos. Basura que entra, basura que sale.
+- **Symptom:** some manual links returned a web page instead of a PDF, and the manuals from another brand extracted as meaningless characters.
+- **Cause:** sites that answer any path with the web application, and PDFs with fonts without a character map.
+- **Fix:** before accepting a manual, check that the download is `application/pdf` and that the extracted text contains expected words (for example, "aceite", oil). The ones that failed were dropped.
+- **Lesson:** validate data quality **before** ingesting it. Garbage in, garbage out.
 
-## 4. La cuenta bloquea buckets públicos
+## 4. The account blocks public buckets
 
-- **Síntoma:** el plan de servir la web desde un bucket S3 público no era viable.
-- **Causa:** la cuenta tiene activado el bloqueo de acceso público de S3 a nivel de cuenta.
-- **Solución:** bucket privado servido por CloudFront con Origin Access Control (OAC). De paso da HTTPS al celular.
-- **Lección:** el bloqueo era correcto; el diseño era el que tenía que cambiar.
+- **Symptom:** the plan to serve the web app from a public S3 bucket was not viable.
+- **Cause:** the account has S3 Block Public Access turned on at the account level.
+- **Fix:** a private bucket served by CloudFront with Origin Access Control (OAC). As a bonus, it gives HTTPS to the phone.
+- **Lesson:** the block was right; the design was what had to change.
 
-## 5. Un `cdk deploy` detenido siguió desplegando
+## 5. A stopped `cdk deploy` kept deploying
 
-- **Síntoma:** después de detener un despliegue, el siguiente `cdk deploy` decía *"Other CLIs are currently reading from cdk.out"*, y la pila apareció en `CREATE_IN_PROGRESS`.
-- **Causa:** al detener la terminal, el proceso de Node del CDK quedó vivo y siguió con el despliegue.
-- **Solución:** dejar que terminara (era la misma pila) y cerrar el proceso huérfano para liberar el candado de `cdk.out`.
-- **Lección:** detener el CLI no cancela CloudFormation. Hay que revisar el estado de la pila, no solo la terminal.
+- **Symptom:** after stopping a deploy, the next `cdk deploy` said *"Other CLIs are currently reading from cdk.out"*, and the stack showed up in `CREATE_IN_PROGRESS`.
+- **Cause:** when the terminal was stopped, the CDK Node process stayed alive and kept deploying.
+- **Fix:** let it finish (it was the same stack) and kill the orphan process to release the `cdk.out` lock.
+- **Lesson:** stopping the CLI does not cancel CloudFormation. Check the stack status, not just the terminal.
 
-## 6. Reorganizar el código obligó a destruir la pila
+## 6. Reorganizing the code forced a stack teardown
 
-- **Síntoma:** partir el stack en un archivo por carril cambiaba los ID lógicos de CloudFormation.
-- **Causa:** con ID nuevos, CloudFormation crea los recursos nuevos antes de borrar los viejos, y la Knowledge Base y el guardrail tienen nombre fijo: chocarían.
-- **Solución:** `cdk destroy` y `cdk deploy` desde cero, antes de tener datos ingeridos. De paso quedó probado el `destroy`.
-- **Lección:** refactorizar IaC no es gratis: los ID lógicos son parte del contrato con los recursos desplegados.
+- **Symptom:** splitting the stack into one file per lane changed the CloudFormation logical IDs.
+- **Cause:** with new IDs, CloudFormation creates the new resources before deleting the old ones, and the knowledge base and the guardrail have fixed names: they would collide.
+- **Fix:** `cdk destroy` and `cdk deploy` from scratch, before any data was ingested. As a side effect, `destroy` got tested.
+- **Lesson:** refactoring IaC is not free: logical IDs are part of the contract with the deployed resources.
 
-## 7. `aws login` no funciona con boto3
+## 7. `aws login` does not work with boto3
 
-- **Síntoma:** `ingestar.py` fallaba con *"Using the login credential provider requires an additional dependency"*.
-- **Causa:** las credenciales de `aws login` necesitan el extra `crt` de botocore. La AWS CLI lo trae; boto3, no.
-- **Solución:** `uv add "boto3[crt]"`.
-- **Lección:** que la CLI funcione no garantiza que el SDK funcione con las mismas credenciales.
+- **Symptom:** `ingestar.py` failed with *"Using the login credential provider requires an additional dependency"*.
+- **Cause:** `aws login` credentials need botocore's `crt` extra. The AWS CLI ships it; boto3 does not.
+- **Fix:** `uv add "boto3[crt]"`.
+- **Lesson:** the CLI working does not guarantee that the SDK works with the same credentials.
 
-## 8. Las tablas de mantenimiento perdían sus columnas
+## 8. Maintenance tables lost their columns
 
-- **Síntoma:** a "¿cada cuánto cambio el aceite?" el asistente respondía, con razón, que no lo encontraba.
-- **Causa:** el parser por defecto solo extrae texto. La fila del cuadro de mantenimiento quedaba como `Aceite de motor / Cambiar / √√√√√√`: los chulos perdían su columna de kilómetros. **Ningún chunking ni embedding puede recuperar lo que el parser ya perdió.**
-- **Solución:** parsing con un modelo con visión (Nova Lite), que lee cada página como imagen y transcribe las tablas a Markdown.
-- **Costo:** tokens por página, solo al ingerir; menos de un dólar por ingesta completa `[verificar en Cost Explorer]`.
-- **Lección:** el parsing es la decisión más subestimada de un RAG.
+- **Symptom:** to "how often do I change the oil?" the assistant answered, correctly, that it could not find it.
+- **Cause:** the default parser only extracts text. The maintenance chart row came out as `Aceite de motor / Cambiar / √√√√√√` ("Engine oil / Change / √√√√√√"): the check marks lost their kilometer column. **No chunking or embedding can recover what the parser already lost.**
+- **Fix:** parsing with a vision model (Nova Lite), which reads each page as an image and transcribes tables to Markdown.
+- **Cost:** tokens per page, only at ingestion; less than one dollar per full ingestion `[to verify in Cost Explorer]`. The README [cost estimate](../README.md#costs) puts it at about USD 0.26 at list price.
+- **Lesson:** parsing is the most underestimated decision in a RAG.
 
-## 9. Cambiar el parser no garantizaba reprocesar
+## 9. Changing the parser did not guarantee reprocessing
 
-- **Síntoma:** `cdk diff` mostraba que la fuente de datos se actualizaría en sitio.
-- **Causa:** con los mismos PDF, la ingesta podía considerarlos "sin cambios" y saltárselos `[verificar]`. Además, la fuente vieja tenía política `RETAIN`: sus vectores habrían seguido vivos.
-- **Solución:** fuente de datos nueva con un ID lógico versionado (`FuenteDatosV2`) y política `DELETE`. Al reemplazarla, la vieja se borra con sus vectores.
-- **Lección:** cambiar cómo se procesa el conocimiento obliga a reprocesarlo entero, y conviene forzarlo de forma explícita.
+- **Symptom:** `cdk diff` showed that the data source would be updated in place.
+- **Cause:** with the same PDFs, ingestion could consider them "unchanged" and skip them `[to verify]`. Also, the old data source had a `RETAIN` policy: its vectors would have stayed alive.
+- **Fix:** a new data source with a versioned logical ID (`FuenteDatosV2`) and a `DELETE` policy. When it is replaced, the old one is deleted with its vectors.
+- **Lesson:** changing how knowledge is processed forces reprocessing all of it, and it is best to force it explicitly.
 
-## 10. La ingesta tardaba más de 30 minutos
+## 10. Ingestion took more than 30 minutes
 
-- **Síntoma:** unas 1.100 páginas tardaron entre 33 y 40 minutos en ingerirse.
-- **Causa:** la cuota de llamadas por minuto al modelo parser en una cuenta nueva. La Knowledge Base espera entre llamadas.
-- **Solución:** ninguna necesaria. La ingesta corre en AWS: el script solo consulta el estado y se puede cerrar.
-- **Lección:** el tiempo no es plata. Se paga por token, no por minuto.
+- **Symptom:** about 1,100 pages took between 33 and 40 minutes to ingest.
+- **Cause:** the requests-per-minute quota for the parser model on a new account. The knowledge base waits between calls.
+- **Fix:** none needed. Ingestion runs in AWS: the script only polls the status and can be closed.
+- **Lesson:** time is not money here. You pay per token, not per minute.
 
-## 11. Las métricas de tokens marcaban 0
+## 11. Token metrics showed 0
 
-- **Síntoma:** las métricas `AWS/Bedrock` de tokens daban 0 para Nova Lite y Titan después de una ingesta completa.
-- **Causa:** las llamadas que la Knowledge Base hace por dentro al ingerir no aparecen como invocaciones de la cuenta en esas métricas `[verificar]`.
-- **Solución:** medir el costo real en Cost Explorer (con un día de retraso) y cubrir el riesgo con el presupuesto de AWS Budgets.
-- **Lección:** saber de dónde sale cada número antes de prometer que se puede medir.
+- **Symptom:** the `AWS/Bedrock` token metrics showed 0 for Nova Lite and Titan after a full ingestion.
+- **Cause:** the calls the knowledge base makes internally during ingestion do not show up as account invocations in those metrics `[to verify]`.
+- **Fix:** measure the real cost in Cost Explorer (with a one-day delay) and cover the risk with the AWS Budgets budget.
+- **Lesson:** know where each number comes from before promising it can be measured.
 
-## 12. El parser inventó una tabla en la página del índice
+## 12. The parser invented a table on the index page
 
-- **Síntoma:** el primer resultado para "¿cada cuánto cambio el aceite?" era la "página 89", con una tabla de cambio de aceite y símbolos `√ ✓ ● X`. En el PDF real, la página 89 es el **índice alfabético**.
-- **Causa:** el prompt del parser traía un ejemplo concreto ("Aceite de motor: cambiar a los 500 km, 3000 km…") y una lista de símbolos. Ante una página sin tablas, el modelo **copió el ejemplo como si fuera contenido**.
-- **Cómo se detectó:** contrastando la página citada con el PDF fuente.
-- **Solución:** prompt sin ejemplos de contenido, con reglas explícitas: no crear tablas que no existen, transcribir el índice tal cual y nunca copiar las instrucciones. Reingesta completa (ver el problema 9).
-- **Verificación:** después de la reingesta, la página 89 ya no aparece y ningún fragmento contiene los símbolos del ejemplo.
-- **Lección:** las alucinaciones también pasan al **ingerir**, no solo al responder. Y un ejemplo en un prompt puede convertirse en contenido.
+- **Symptom:** the top result for "how often do I change the oil?" was "page 89", with an oil change table and the symbols `√ ✓ ● X`. In the real PDF, page 89 is the **alphabetical index**.
+- **Cause:** the parser prompt included a concrete example ("Engine oil: change at 500 km, 3000 km...") and a list of symbols. Faced with a page without tables, the model **copied the example as if it were content**.
+- **How it was caught:** by checking the cited page against the source PDF.
+- **Fix:** a prompt with no content examples and explicit rules: do not create tables that do not exist, transcribe the index as is and never copy the instructions. Full re-ingestion (see problem 9).
+- **Verification:** after re-ingestion, page 89 no longer shows up and no chunk contains the example's symbols.
+- **Lesson:** hallucinations also happen at **ingestion**, not only when answering. And an example in a prompt can turn into content.
 
-## 13. La Lambda era alcanzable sin pasar por CloudFront
+## 13. The Lambda function was reachable without going through CloudFront
 
-- **Síntoma:** la Function URL de la Lambda era pública (`auth NONE`): cualquiera con la URL podía llamarla directo.
-- **Causa:** el diseño inicial ponía CloudFront solo delante de la web, no de la API.
-- **Solución:** CloudFront como única puerta. `/*` va a S3 y `/api/*` va a la Lambda, las dos con OAC. La Function URL exige firma (`AWS_IAM`) y solo CloudFront firma. Para los `POST`, el navegador envía el SHA-256 del cuerpo en el header `x-amz-content-sha256`, como exige Lambda. Además desaparece CORS, porque todo es el mismo dominio.
-- **Lección:** el backend no debe ser alcanzable sin pasar por el borde, que es donde se ponen WAF y los límites.
+- **Symptom:** the Lambda Function URL was public (`auth NONE`): anyone with the URL could call it directly.
+- **Cause:** the initial design put CloudFront only in front of the web app, not the API.
+- **Fix:** CloudFront as the only door. `/*` goes to S3 and `/api/*` goes to the Lambda function, both with OAC. The Function URL requires a signature (`AWS_IAM`) and only CloudFront signs. For `POST` requests, the browser sends the SHA-256 of the body in the `x-amz-content-sha256` header, as Lambda requires. CORS also goes away, because everything is on the same domain.
+- **Lesson:** the backend must not be reachable without going through the edge, which is where WAF and limits go.
 
-## 14. La demo quedaba expuesta de noche
+## 14. The demo stayed exposed overnight
 
-- **Síntoma:** la web quedaba pública mientras nadie la vigilaba, y cada pregunta gasta tokens.
-- **Solución:** un interruptor en CDK (`--context web_activa=false`) que deshabilita la distribución sin borrar nada, y una restricción geográfica permanente a Colombia.
-- **Lección:** apagar cuesta cero. Para una demo, el control más barato es no estar expuesta cuando no se usa.
+- **Symptom:** the web app stayed public while nobody was watching it, and every question spends tokens.
+- **Fix:** a CDK switch (`--context web_activa=false`) that disables the distribution without deleting anything, and a permanent geographic restriction to Colombia.
+- **Lesson:** turning it off costs nothing. For a demo, the cheapest control is not being exposed when nobody uses it.
 
-## 15. El aviso de "llévalo al taller" salía de más
+## 15. The "take it to a mechanic" warning showed up too often
 
-- **Síntoma:** el aviso aparecía incluso en "¿qué cantidad de aceite lleva el motor?".
-- **Causa:** la regla buscaba la palabra "aceite" en la pregunta **y en la respuesta del modelo**.
-- **Solución:** la regla se activa solo por **síntomas** en la pregunta o en la foto (luces rojas o encendidas, frenos, temperatura, fugas, ruidos, humo), no por lo que responde el modelo. Se probó con 11 casos.
-- **Lección:** un aviso que sale siempre deja de servir.
+- **Symptom:** the warning appeared even for "how much oil does the engine take?".
+- **Cause:** the rule looked for the word "aceite" (oil) in the question **and in the model's answer**.
+- **Fix:** the rule fires only on **symptoms** in the question or the photo (red or lit warning lights, brakes, temperature, leaks, noises, smoke), not on what the model answers. Tested with 11 cases.
+- **Lesson:** a warning that always shows up stops being useful.
 
-## 16. Una versión de guardrail que no se actualiza sola
+## 16. A guardrail version that does not update itself
 
-- **Síntoma:** al agregar reglas al guardrail, la Lambda habría seguido usando la versión anterior.
-- **Causa:** el recurso `AWS::Bedrock::GuardrailVersion` se crea una vez; cambiar el guardrail solo cambia el borrador.
-- **Solución:** cambiar la descripción de la versión fuerza a CloudFormation a crear una nueva. Quedó documentado en `guardrail.py`.
-- **Lección:** leer el `cdk diff` antes de desplegar: mostró `replace` justo donde tenía que estar.
+- **Symptom:** when rules were added to the guardrail, the Lambda function would have kept using the previous version.
+- **Cause:** the `AWS::Bedrock::GuardrailVersion` resource is created once; changing the guardrail only changes the draft.
+- **Fix:** changing the version description forces CloudFormation to create a new one. It is documented in `guardrail.py`.
+- **Lesson:** read the `cdk diff` before deploying: it showed `replace` exactly where it had to.
 
-## 17. Diagnóstico equivocado: un dato "inventado" que sí estaba
+## 17. Wrong diagnosis: an "invented" value that was actually there
 
-- **Síntoma:** el asistente respondió *"el aceite debe cambiarse cada 3000 km (pág. 44)"*, y se concluyó que el "3000 km" era inventado porque el fragmento parecía tener solo los chulos, sin los kilómetros.
-- **Causa del error de diagnóstico:** al inspeccionar el fragmento se recortó el texto alrededor de la palabra "aceite", y el encabezado con los kilómetros, que estaba en el mismo fragmento más arriba, quedó fuera de la vista.
-- **Qué mostró la medición:** con el grounding contextual activo, esa respuesta sacó 0,92: estaba respaldada. Al leer el fragmento completo apareció el encabezado `500 km | 3000 km (1900 mi) | 6000 km | …`.
-- **El problema real:** la respuesta está respaldada pero **incompleta**. El cuadro marca el primer cambio a los 500 km, y la respuesta lo omite.
-- **Lección:** antes de concluir, leer la evidencia completa. Y el grounding mide que lo dicho esté en la fuente, **no que esté completo**: la completitud la valida el set dorado con datos esperados.
+- **Symptom:** the assistant answered *"the oil must be changed every 3000 km (p. 44)"*, and the conclusion was that "3000 km" was invented because the chunk seemed to contain only the check marks, without the kilometers.
+- **Cause of the diagnosis mistake:** while inspecting the chunk, the text was trimmed around the word "aceite", and the header with the kilometers, higher up in the same chunk, was left out of view.
+- **What the measurement showed:** with contextual grounding active, that answer scored 0.92: it was supported. Reading the full chunk revealed the header `500 km | 3000 km (1900 mi) | 6000 km | ...`.
+- **The real problem:** the answer is supported but **incomplete**. The chart marks the first change at 500 km, and the answer leaves it out.
+- **Lesson:** read the full evidence before concluding. And grounding measures that what is said is in the source, **not that it is complete**: completeness is checked by the golden set with expected values.
 
-## 18. Ninguna alarma llegaba a Slack
+## 18. No alarm reached Slack
 
-- **Síntoma:** al forzar una alarma a estado ALARM, su historial decía *"CloudWatch Alarms is not authorized to perform: SNS:Publish"*. A Slack no llegó nada.
-- **Causa:** para que AWS Budgets publicara en el tema de SNS se agregó un permiso a la política del tema. Esa política **reemplaza** la política por defecto de SNS, que es la que dejaba publicar a CloudWatch. Quedó solo el permiso de Budgets.
-- **Cómo se detectó:** forzando una alarma a mano (`set-alarm-state`) y leyendo el historial de acciones, en vez de asumir que funcionaba.
-- **Solución:** la política del tema declara explícitamente a CloudWatch y a Budgets, limitados a la cuenta (`aws:SourceAccount`).
-- **Verificación:** con el arreglo desplegado, la misma alarma forzada registra *"Successfully executed action"* hacia el tema de SNS, donde antes decía *"Failed to execute action"*, y el mensaje llega al canal de Slack.
-- **Lección:** una alerta que nunca se ha probado no es una alerta. Hay que forzar la falla.
+- **Symptom:** when an alarm was forced into the ALARM state, its history said *"CloudWatch Alarms is not authorized to perform: SNS:Publish"*. Nothing reached Slack.
+- **Cause:** to let AWS Budgets publish to the SNS topic, a statement was added to the topic policy. That policy **replaces** the default SNS policy, which was what allowed CloudWatch to publish. Only the Budgets permission was left.
+- **How it was caught:** by forcing an alarm by hand (`set-alarm-state`) and reading the action history, instead of assuming it worked.
+- **Fix:** the topic policy explicitly declares CloudWatch and Budgets, limited to the account (`aws:SourceAccount`).
+- **Verification:** with the fix deployed, the same forced alarm logs *"Successfully executed action"* to the SNS topic, where it used to say *"Failed to execute action"*, and the message reaches the Slack channel.
+- **Lesson:** an alert that has never been tested is not an alert. Force the failure.
 
-## 19. El set dorado no pasa: 8 de 10
+## 19. The golden set does not pass: 8 out of 10
 
-- **Qué se hizo:** 10 preguntas con la respuesta verificada a mano contra el PDF, cubriendo los 6 manuales, los dos idiomas, un caso de seguridad y tres trampas. Ver [`pruebas/`](../pruebas/).
-- **Resultado:** 8 de 10 en las dos corridas. Las tres trampas pasan: vehículo equivocado, fuera del manual e inyección. El umbral pide 9 de 10. Entre corridas cambió la calidad del fallo: el caso de la Pulsar pasó de entregar un "no encontré" disfrazado de respuesta a decir con claridad que no está.
-- **Fallos:** los problemas 20 y 21. El 22 apareció al revisar el detalle de las respuestas.
-- **Lección:** el set dorado encontró en 30 segundos dos fallos que las pruebas a mano no habían visto. Por eso es la compuerta antes de cualquier cambio.
+- **What was done:** 10 questions with the answer verified by hand against the PDF, covering the 6 manuals, both languages, one safety case and three traps. See [`pruebas/`](../pruebas/).
+- **Result:** 8 out of 10 in both runs. All three traps pass: wrong vehicle, outside the manual and injection. The threshold requires 9 out of 10. Between runs, the quality of the failure changed: the Pulsar case went from a "not found" disguised as an answer to saying clearly that it is not there.
+- **Failures:** problems 20 and 21. Problem 22 came up while reviewing the answer details.
+- **Lesson:** the golden set found in 30 seconds two failures that manual testing had missed. That is why it is the gate before any change.
 
-## 20. Respuesta respaldada pero incompleta
+## 20. Supported but incomplete answer
 
-- **Síntoma:** a "¿cada cuánto cambio el aceite?" (Yamaha XTZ125) responde "cada 3000 km". El cuadro de mantenimiento marca el primer cambio a los **500 km** y luego cada 3000.
-- **Causa:** el grounding pasa (el dato está en la fuente), pero nada obliga a la respuesta a incluir **todos** los valores relevantes del fragmento.
-- **Intento 1:** se agregó a las instrucciones del generador que incluya todos los valores relevantes de una fila de tabla (primer intervalo y frecuencia). **No funcionó:** el set dorado volvió a fallar. Nova 2 Lite respondió que la fila marca "Cambiar" en la columna de los 3000 km, cuando la fila tiene marcas en las seis columnas. El modelo lee mal la tabla; no es un problema de instrucciones.
-- **Intento 2:** escalar el generador a Nova Pro, como dice la regla del Inception (escalar solo si el set dorado lo muestra). **Tampoco funcionó** y empeoró otro caso (ver el problema 23).
-- **Lección:** el grounding no mide completitud; los datos esperados del set dorado, sí. Y no todo se arregla con prompt: cuando el set dorado falla después de ajustar instrucciones, la evidencia justifica cambiar de modelo.
+- **Symptom:** to "how often do I change the oil?" (Yamaha XTZ125) it answers "every 3000 km". The maintenance chart marks the first change at **500 km** and then every 3000.
+- **Cause:** grounding passes (the value is in the source), but nothing forces the answer to include **all** the relevant values of the chunk.
+- **Attempt 1:** the generator instructions were told to include all the relevant values of a table row (first interval and frequency). **It did not work:** the golden set failed again. Nova 2 Lite answered that the row marks "Change" in the 3000 km column, when the row has marks in all six columns. The model misreads the table; it is not an instructions problem.
+- **Attempt 2:** move the generator up to Nova Pro, as the Inception rule says (move up only if the golden set shows the need). **It did not work either** and made another case worse (see problem 23).
+- **Lesson:** grounding does not measure completeness; the expected values in the golden set do. And not everything is fixed with a prompt: when the golden set still fails after adjusting the instructions, the evidence justifies changing the model.
 
-## 21. Páginas del manual que nunca llegaron al índice
+## 21. Manual pages that never reached the index
 
-- **Síntoma:** a "¿qué aceite le pongo y cada cuánto lo cambio?" (Bajaj Pulsar NS125) no encuentra el dato. La página con la especificación (SAE 20W50, cambio cada 10.000 km) existe en el PDF.
-- **Qué se midió:**
-  - La misma pregunta **en inglés** tampoco trae esa página, así que el idioma no es la causa.
-  - Pidiendo hasta 100 fragmentos de ese manual, aparecen 58 fragmentos que empiezan en 50 páginas distintas. **10 páginas no tienen ningún fragmento**, entre ellas la de la especificación del aceite.
-  - Además, la búsqueda devuelve menos fragmentos que los pedidos (3 o 4 de 8) `[verificar causa]`.
-- **Causas posibles, por confirmar:** que el parser con visión haya devuelto vacío en páginas con mucha imagen, o que el texto de esas páginas haya quedado dentro de un fragmento que empieza en la página anterior.
-- **Pendiente:** revisar la salida del parser por página y, si se confirma, subir el número de fragmentos recuperados y validar en la ingesta que cada página produzca texto.
-- **Lección:** que una ingesta diga "6 de 6 documentos indexados" no significa que **todas las páginas** estén en el índice. Hay que medir cobertura por página.
+- **Symptom:** for "what oil do I use and how often do I change it?" (Bajaj Pulsar NS125) it does not find the value. The page with the specification (SAE 20W50, change every 10,000 km) exists in the PDF.
+- **What was measured:**
+  - The same question **in English** does not retrieve that page either, so the language is not the cause.
+  - Asking for up to 100 chunks from that manual returns 58 chunks starting on 50 different pages. **10 pages have no chunk at all**, including the one with the oil specification.
+  - Also, the search returns fewer chunks than requested (3 or 4 out of 8) `[cause to verify]`.
+- **Possible causes, to be confirmed:** the vision parser returned empty output for image-heavy pages, or the text of those pages ended up inside a chunk that starts on the previous page.
+- **Pending:** review the parser output per page and, if confirmed, raise the number of retrieved chunks and validate during ingestion that every page produces text.
+- **Lesson:** an ingestion that says "6 of 6 documents indexed" does not mean **every page** is in the index. Measure coverage per page.
 
-## 22. Un "no encontré" dicho con otras palabras pasaba como respuesta
+## 22. A "not found" phrased differently passed as an answer
 
-- **Síntoma:** en el caso de la Pulsar, el modelo respondió *"No encontré información específica sobre qué tipo de aceite usar…"*, sin citas, y la app lo entregó como respuesta normal.
-- **Causa:** el código detecta el "no encontrado" buscando la frase exacta de las instrucciones. El modelo la dijo con otras palabras.
-- **Solución:** toda respuesta que no cite ninguna página se trata como "no encontrado". Es una regla en código y no depende de la redacción del modelo.
-- **Verificación:** en la segunda corrida del set dorado, el mismo caso responde *"No encontré eso en el manual de tu vehículo."*. Sigue sin el dato (problema 21), pero ahora falla de forma segura.
-- **Lección:** no confiar en que el modelo repita una frase exacta. Las reglas deben verificar una señal estructural (hay o no hay citas).
-
----
-
-## 23. Un modelo más capaz respondió peor
-
-- **Hipótesis:** si Nova 2 Lite lee mal la tabla de intervalos (problema 20), un modelo más capaz la leería bien.
-- **Experimento:** el generador se cambió a Nova Pro (una línea en `stack.py`), se desplegó y se corrió el set dorado.
-- **Resultado:** 8 de 10, como antes, pero con un fallo **peor**:
-  - El intervalo del aceite siguió incompleto ("cada 3000 km").
-  - En la Pulsar, donde Lite respondía con honestidad "no encontré", Pro afirmó: *"Usa SAE 90 y cámbialo cada 500 km (pág. 46)"*. En el manual, el SAE 90 y los 500 km son **del cuidado de la cadena** (limpiarla con diésel y SAE 90, lubricarla con spray cada 500 km), no del aceite del motor.
-- **Por qué el grounding no lo atrapó:** los dos datos sí están en la fuente; solo están atribuidos a otra pieza. El grounding verifica que el dato exista en la fuente, **no que esté atribuido a lo correcto**.
-- **Decisión:** volver a Nova 2 Lite. Pro cuesta varias veces más por token `[verificar]`, no arregló la completitud y convirtió un fallo seguro en uno peligroso. Se confirmó con otra corrida: vuelve a 8 de 10, con la Pulsar respondiendo "no encontré".
-- **Lección:** un modelo más grande no es automáticamente más seguro. Cambiar de modelo es un cambio que pasa por la compuerta de evaluación, y la evaluación debe poder **revertirlo**. Un "no sé" honesto vale más que una respuesta segura y equivocada.
+- **Symptom:** in the Pulsar case, the model answered *"I did not find specific information about which type of oil to use..."*, with no citations, and the app delivered it as a normal answer.
+- **Cause:** the code detected "not found" by looking for the exact phrase from the instructions. The model said it in other words.
+- **Fix:** any answer that does not cite any page is treated as "not found". It is a rule in code and does not depend on the model's wording.
+- **Verification:** in the second golden set run, the same case answers *"I did not find that in your vehicle's manual."* (the app's fixed Spanish message). It still lacks the value (problem 21), but now it fails safely.
+- **Lesson:** do not trust the model to repeat an exact phrase. Rules should check a structural signal (whether there are citations or not).
 
 ---
 
-**Nota sobre los números de página `[verificar]`:** cada fragmento se etiqueta con la página donde **empieza**. Si empieza al final de una página, la cita puede quedar una página antes de donde está el dato (en un caso, la cita dijo 50 y el dato está en la 51 del visor de PDF). Por eso el set dorado acepta una página de diferencia.
+## 23. A more capable model answered worse
+
+- **Hypothesis:** if Nova 2 Lite misreads the interval table (problem 20), a more capable model would read it correctly.
+- **Experiment:** the generator was switched to Nova Pro (one line in `stack.py`), deployed, and the golden set was run.
+- **Result:** 8 out of 10, as before, but with a **worse** failure:
+  - The oil interval was still incomplete ("every 3000 km").
+  - On the Pulsar, where Lite honestly answered "not found", Pro stated: *"Use SAE 90 and change it every 500 km (p. 46)"*. In the manual, SAE 90 and 500 km are **for chain care** (clean it with diesel and SAE 90, lubricate it with spray every 500 km), not for the engine oil.
+- **Why grounding did not catch it:** both values are in the source; they are just attributed to another part. Grounding checks that the value exists in the source, **not that it is attributed to the right thing**.
+- **Decision:** go back to Nova 2 Lite. Pro costs more (USD 0.80 / 3.20 per 1M input / output tokens versus USD 0.33 / 2.75 for Nova 2 Lite, us-east-1 public pricing checked on 2026-11-16; about twice as much per question with this prompt size), did not fix completeness and turned a safe failure into a dangerous one. It was confirmed with another run: back to 8 out of 10, with the Pulsar answering "not found".
+- **Lesson:** a bigger model is not automatically safer. Changing the model is a change that goes through the evaluation gate, and the evaluation must be able to **revert** it. An honest "I don't know" is worth more than a confident wrong answer.
+
+---
+
+**Note on page numbers `[to verify]`:** each chunk is tagged with the page where it **starts**. If it starts at the end of a page, the citation can land one page before the value (in one case, the citation said 50 and the value is on page 51 of the PDF viewer). That is why the golden set accepts a one-page difference.
