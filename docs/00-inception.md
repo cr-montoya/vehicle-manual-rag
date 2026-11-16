@@ -25,7 +25,7 @@ A non-technical person asks about their motorcycle or car ("how often do I chang
 | --- | --- | --- |
 | Source | S3 with one `.metadata.json` per PDF: `tipo`, `marca`, `modelo`, `anio` (type, make, model, year) | One index per vehicle: does not scale and duplicates infrastructure |
 | RAG | Amazon Bedrock Knowledge Base | Custom pipeline with LangChain: more code and operations |
-| Vector store | **Amazon S3 Vectors** (GA since December 2025, integrated with Knowledge Bases) | Amazon OpenSearch Serverless: has a floor of about USD 170 per month `[to verify]`, unjustified for 3 PDFs |
+| Vector store | **Amazon S3 Vectors** (GA since December 2025, integrated with Knowledge Bases) | Amazon OpenSearch Serverless: bills compute in OCU-hours (USD 0.24 per OCU-hour in us-east-1, about USD 175 per month for each OCU kept running), and a [minimum capacity](https://docs.aws.amazon.com/opensearch-service/latest/developerguide/serverless-scaling.html) above 0 is billed even when idle; unjustified for 3 PDFs |
 | Embeddings | Amazon Titan Text Embeddings V2 | Cohere: adds nothing for 3 documents |
 | Generator | **Claude Haiku 5.5** (vision, speed, cost); move up to Sonnet 5.5 only if the golden set shows it misreads photos | Sonnet from the start: more expensive with no evidence it is needed |
 | Safety | Basic Amazon Bedrock Guardrails: out-of-scope topics and prompt injection | No guardrail: a non-technical person will use it with free-form questions |
@@ -40,7 +40,7 @@ A non-technical person asks about their motorcycle or car ("how often do I chang
 | --- | --- |
 | Personal account with AWS credits in us-east-1 | The region and the model IDs |
 | The PDFs have extractable text, they are not scans | Parsing with a foundation model or Amazon Textract would be needed at ingestion |
-| The page citation comes from the location metadata the knowledge base returns `[to verify in testing]` | Each PDF is split by page before ingestion |
+| The page citation comes from the location metadata the knowledge base returns (confirmed: the Lambda function reads `x-amz-bedrock-kb-document-page-number` from each retrieved chunk) | Each PDF is split by page before ingestion |
 | The "take it to a mechanic" rule lives in the prompt, plus a keyword list in the Lambda function | It moves to a deterministic rule in code, outside the model (this is how it was implemented) |
 
 ## 6. Acceptance criteria: a golden set of 10 questions
@@ -50,10 +50,10 @@ A non-technical person asks about their motorcycle or car ("how often do I chang
 - **Trap 1, wrong vehicle:** ask about the motorcycle with the car selected. Passes if it does not answer from the other manual.
 - **Trap 2, outside the manuals:** for example, "how much does insurance cost?". Passes if it answers "it is not in the manual".
 
-Proposed threshold: 9 out of 10, with both traps required `[to decide]`.
+Proposed threshold: 9 out of 10, with both traps required. Decided: 9 out of 10 with every trap required (the final golden set has three traps).
 
 ## 7. Open questions for the human
 
-1. **Corpus:** real or fictional manuals? Official manufacturer manuals are copyrighted, and I did not find a license that allows using them in a demo `[to verify on each manufacturer's site]`. Fictional ones can be shown and versioned without that risk.
+1. **Corpus:** real or fictional manuals? Official manufacturer manuals are copyrighted, and I did not find a license that allows using them in a demo. Fictional ones can be shown and versioned without that risk. Decided: real manuals, downloaded from each manufacturer's official URL and never redistributed in the repository.
 2. Threshold of 9 out of 10?
 3. Haiku 5.5 as the initial generator?
