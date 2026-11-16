@@ -1,359 +1,437 @@
-# Manual de mi vehículo
+# vehicle-manual-rag
 
-**Asistente que responde con lo que dice el manual de TU moto o carro, citando la página.**
-Preguntas "¿cada cuánto cambio el aceite?" o subes una foto del tablero ("¿qué significa esta luz?") y responde con el manual de ese vehículo. Si el tema es de seguridad, te dice que lo lleves al taller.
+**An assistant that answers from the owner's manual of YOUR motorcycle or car, citing the page.**
+Ask "how often do I change the oil?" or upload a photo of the dashboard ("what does this light mean?") and it answers from that vehicle's manual. If the topic is safety related, it tells you to take the vehicle to a mechanic.
 
 ![AWS CDK](https://img.shields.io/badge/AWS_CDK-Python-FF9900?logo=amazonwebservices&logoColor=white)
 ![Amazon Bedrock](https://img.shields.io/badge/Amazon_Bedrock-Knowledge_Bases-01A88D?logo=amazonwebservices&logoColor=white)
 ![S3 Vectors](https://img.shields.io/badge/Amazon_S3-Vectors-7AA116?logo=amazons3&logoColor=white)
 ![uv](https://img.shields.io/badge/uv-Python_3.12-DE5FE9?logo=python&logoColor=white)
+![License: MIT](https://img.shields.io/badge/License-MIT_(code_only)-blue)
 
-![Arquitectura](docs/arquitectura.png)
+![Architecture](docs/arquitectura.png)
 
-> Línea sólida: cada pregunta. Línea punteada: ingesta de manuales. Rosado: alertas.
-> Diagrama editable: [`docs/arquitectura.drawio`](docs/arquitectura.drawio) (draw.io). El flujo paso a paso está en [Cómo funciona](#cómo-funciona).
+> Solid line: each question. Dotted line: manual ingestion. Pink: alerts.
+> Editable diagram: [`docs/arquitectura.drawio`](docs/arquitectura.drawio) (draw.io). The step-by-step flow is in [How it works](#how-it-works).
 
----
+> **Versión en español.** La app responde en español y está pensada para personas en Colombia; por eso la interfaz, los prompts, el set de pruebas y los comentarios del código están en español. La documentación está en inglés. La última versión de este README en español está en el [historial del repositorio](https://github.com/cr-montoya/vehicle-manual-rag/blob/2fa7006/README.md).
 
-## Contenido
-
-1. [Qué problema resuelve](#qué-problema-resuelve)
-2. [Cómo funciona](#cómo-funciona)
-3. [Decisiones de arquitectura](#decisiones-de-arquitectura)
-4. [Controles de seguridad y gobierno](#controles-de-seguridad-y-gobierno)
-5. [Lecciones aprendidas](#lecciones-aprendidas)
-6. [Estructura del repositorio](#estructura-del-repositorio)
-7. [Desplegar](#desplegar)
-8. [Pruebas](#pruebas)
-9. [Costos](#costos)
-10. [Destruir](#destruir)
-11. [Manuales y derechos de autor](#manuales-y-derechos-de-autor)
+**About the language.** The app's end users are Spanish speakers in Colombia, so the web UI, the prompts, the golden test set and the code comments are in Spanish on purpose. Identifiers (Python modules, CDK construct IDs) are kept as they are because renaming construct IDs would replace deployed AWS resources. A short glossary: *manual* = manual, *carril* = lane (one CDK construct per file), *set dorado* = golden set, *bitácora* = engineering log, *pruebas* = tests.
 
 ---
 
-## Qué problema resuelve
+## Contents
 
-Los manuales del propietario tienen cientos de páginas y nadie los lee. La información está, pero no se encuentra cuando hace falta.
-
-El riesgo principal no es que el asistente no sepa: es que **responda con el manual equivocado** (el intervalo de aceite de otra moto) o que **invente una cita**. Todo el diseño gira alrededor de evitar esas dos cosas.
-
-**Escalón de autonomía: 2 (RAG).** No hace falta un agente: no hay acciones ni un camino que dependa del caso. Se descartó un agente con herramientas porque suma latencia y riesgo sin aportar valor aquí.
-
-**Corpus:** 6 manuales oficiales, 4 motos y 2 carros, en español e inglés.
-
-| Vehículo | Tipo | Idioma |
-| --- | --- | --- |
-| Honda Wave 110i (2015) | Moto | Español |
-| Yamaha XTZ125 | Moto | Español |
-| Yamaha XTZ250 | Moto | Español |
-| Bajaj Pulsar NS125 | Moto | Inglés |
-| Nissan Frontier (2023) | Camioneta | Español |
-| BYD Seagull (eléctrico) | Carro | Inglés |
-
-Los manuales en inglés se responden en español, manteniendo la cita de página.
+1. [What problem it solves](#what-problem-it-solves)
+2. [How it works](#how-it-works)
+3. [Architecture decisions](#architecture-decisions)
+4. [Security and governance controls](#security-and-governance-controls)
+5. [Lessons learned](#lessons-learned)
+6. [Repository layout](#repository-layout)
+7. [Deploy](#deploy)
+8. [Tests](#tests)
+9. [Costs](#costs)
+10. [Tear down](#tear-down)
+11. [Manuals and copyright](#manuals-and-copyright)
+12. [License](#license)
 
 ---
 
-## Cómo funciona
+## What problem it solves
 
-Hay tres momentos distintos. Los PDF se leen **una sola vez**, en la ingesta; cada pregunta solo busca en los vectores.
+Owner's manuals have hundreds of pages and nobody reads them. The information is there, but you cannot find it when you need it.
 
-![Flujo: deploy, ingesta y cada pregunta](docs/flujo-rag.png)
+The main risk is not that the assistant does not know: it is that it **answers from the wrong manual** (the oil interval of a different motorcycle) or that it **makes up a citation**. The whole design revolves around preventing those two things.
 
-### Cada pregunta (tiempo real)
+**Autonomy level: 2 (RAG).** No agent is needed: there are no actions and no path that depends on the case. An agent with tools was ruled out because it adds latency and risk without adding value here.
 
-| Paso | Qué pasa | Servicio |
+**Corpus:** 6 official manuals, 4 motorcycles and 2 cars, in Spanish and English.
+
+| Vehicle | Type | Manual language |
 | --- | --- | --- |
-| 1 | La persona abre la web desde el celular por HTTPS | Amazon CloudFront |
-| 2 | CloudFront sirve la SPA desde un bucket privado (`/*`, Origin Access Control) | Amazon S3 |
-| 3 | La SPA envía pregunta, vehículo y foto a `/api/*`. CloudFront firma la petición hacia la Lambda (OAC) | AWS Lambda (Function URL con `AWS_IAM`) |
-| 4 | El guardrail revisa la entrada: prompt injection, insultos y datos personales | Bedrock Guardrails |
-| 5 | Si hay foto, Nova describe el testigo del tablero; esa descripción se suma a la búsqueda | Amazon Nova 2 Lite |
-| 6 | La Knowledge Base busca **solo en el manual del vehículo elegido** (filtro por marca, modelo y año) | Bedrock Knowledge Bases |
-| 7 | Titan vectoriza la pregunta y S3 Vectors devuelve los 8 fragmentos más parecidos | Titan Embeddings V2, S3 Vectors |
-| 8 | Nova redacta la respuesta con la página citada | Amazon Nova 2 Lite |
-| 9 | El guardrail compara la respuesta con los fragmentos (grounding contextual). Si afirma algo que no está, no se entrega y se muestran las páginas para revisar. Si la pregunta describe un síntoma de seguridad, el código agrega "llévalo al taller" | Bedrock Guardrails |
+| Honda Wave 110i (2015) | Motorcycle | Spanish |
+| Yamaha XTZ125 | Motorcycle | Spanish |
+| Yamaha XTZ250 | Motorcycle | Spanish |
+| Bajaj Pulsar NS125 | Motorcycle | English |
+| Nissan Frontier (2023) | Pickup truck | Spanish |
+| BYD Seagull (electric) | Car | English |
 
-El código de estos pasos está en [`backend/handler.py`](backend/handler.py), comentado paso por paso.
+Questions about the English manuals are answered in Spanish, keeping the page citation.
 
-### Ingesta (una vez por cambio de manuales)
+---
 
-| Paso | Qué pasa | Quién lo hace |
+## How it works
+
+There are three separate moments. The PDFs are read **only once**, during ingestion; each question only searches the vectors.
+
+![Flow: deploy, ingestion and each question](docs/flujo-rag.png)
+
+### Each question (real time)
+
+| Step | What happens | Service |
 | --- | --- | --- |
-| A | `cdk deploy` sube los PDF y sus metadatos (`.metadata.json`) a S3 | AWS CDK |
-| B | `ingestar.py` le dice a la Knowledge Base "procesa ahora" | Script |
-| C | **Leer:** cada página se lee como imagen y se transcribe a Markdown, con las tablas legibles | Amazon Nova Lite (parser) |
-| D | **Partir:** el texto se corta en fragmentos de 300 tokens con 15 % de traslape. Es una regla fija, sin IA | Knowledge Base |
-| E | **Vectorizar:** cada fragmento se convierte en un vector de 1024 números | Titan Embeddings V2 |
-| F | **Guardar:** el vector se guarda con su texto, su página y los metadatos del vehículo | S3 Vectors |
+| 1 | The user opens the web app on their phone over HTTPS | Amazon CloudFront |
+| 2 | CloudFront serves the SPA from a private bucket (`/*`, Origin Access Control) | Amazon S3 |
+| 3 | The SPA sends the question, vehicle and photo to `/api/*`. CloudFront signs the request to the Lambda function (OAC) | AWS Lambda (Function URL with `AWS_IAM`) |
+| 4 | The guardrail checks the input: prompt injection, insults and personal data | Amazon Bedrock Guardrails |
+| 5 | If there is a photo, Nova describes the dashboard warning light; that description is added to the search | Amazon Nova 2 Lite |
+| 6 | The knowledge base searches **only the manual of the selected vehicle** (filter on make, model and year) | Amazon Bedrock Knowledge Bases |
+| 7 | Titan embeds the question and S3 Vectors returns the 8 most similar chunks | Amazon Titan Text Embeddings V2, Amazon S3 Vectors |
+| 8 | Nova writes the answer with the page cited | Amazon Nova 2 Lite |
+| 9 | The guardrail compares the answer with the chunks (contextual grounding). If it states something that is not there, the answer is not delivered and the pages are shown for review. If the question describes a safety symptom, the code adds "take it to a mechanic" | Amazon Bedrock Guardrails |
 
-> La Knowledge Base **no es un almacén**: es el pipeline que orquesta. Nova y Titan son los trabajadores; S3 Vectors es el almacén.
-> Analogía de CI/CD: `cdk deploy` publica el artefacto, la ingesta es el build y cada pregunta es el runtime.
+The code for these steps is in [`backend/handler.py`](backend/handler.py), commented step by step.
 
-Toda la receta de la ingesta (de dónde leer, cómo parsear, cómo partir, con qué modelo vectorizar) es **configuración versionada** en [`infra/infra_manuales/conocimiento.py`](infra/infra_manuales/conocimiento.py), no un script suelto.
+### Ingestion (once per change to the manuals)
 
-### Alertas
+| Step | What happens | Who does it |
+| --- | --- | --- |
+| A | `cdk deploy` uploads the PDFs and their metadata (`.metadata.json`) to S3 | AWS CDK |
+| B | `ingestar.py` tells the knowledge base "process now" | Script |
+| C | **Read:** each page is read as an image and transcribed to Markdown, with readable tables | Amazon Nova Lite (parser) |
+| D | **Split:** the text is cut into 300-token chunks with 15 % overlap. It is a fixed rule, no AI | Knowledge base |
+| E | **Embed:** each chunk becomes a vector of 1024 numbers | Titan Text Embeddings V2 |
+| F | **Store:** the vector is stored with its text, its page and the vehicle metadata | S3 Vectors |
 
-Cinco alarmas de CloudWatch y un presupuesto de AWS Budgets publican en un tema de SNS. **Amazon Q Developer in chat applications** (antes AWS Chatbot) lo entrega en un canal de Slack. Sin webhook y sin secreto que guardar.
+> The knowledge base **is not a store**: it is the pipeline that orchestrates. Nova and Titan are the workers; S3 Vectors is the store.
+> CI/CD analogy: `cdk deploy` publishes the artifact, ingestion is the build and each question is the runtime.
 
-| Alerta | Señal | Umbral | Qué hacer si suena |
+The whole ingestion recipe (where to read from, how to parse, how to split, which model embeds) is **versioned configuration** in [`infra/infra_manuales/conocimiento.py`](infra/infra_manuales/conocimiento.py), not a loose script.
+
+### Alerts
+
+Five CloudWatch alarms and an AWS Budgets budget publish to an SNS topic. **Amazon Q Developer in chat applications** (formerly AWS Chatbot) delivers it to a Slack channel. No webhook and no secret to store.
+
+| Alert | Signal | Threshold | What to do when it fires |
 | --- | --- | --- | --- |
-| Errores | Errores de la Lambda | 1 o más en 5 min | Revisar en los logs qué paso falló |
-| Lentitud | Duración p90 | Más de 20 s en 15 min | Ver si es Bedrock o la búsqueda |
-| Abuso | Invocaciones | Más de 200 por hora | Poner AWS WAF con límite de tasa en CloudFront |
-| **Ataques** | Bloqueos del guardrail (filtro sobre los logs) | 5 o más en 15 min | Revisar el origen: es evidencia de que el control funciona |
-| **Calidad** | % de respuestas "no encontré" (filtro sobre los logs) | Más de 40 % en 1 h | Correr el set dorado: posible regresión del parsing |
-| Costo | AWS Budgets | 80 % real o 100 % pronosticado de USD 10 al mes | Destruir la pila o investigar el gasto |
+| Errors | Lambda errors | 1 or more in 5 min | Check the logs to see which step failed |
+| Latency | p90 duration | Over 20 s in 15 min | Check whether it is Bedrock or the search |
+| Abuse | Invocations | Over 200 per hour | Put AWS WAF with a rate limit on CloudFront |
+| **Attacks** | Guardrail blocks (log metric filter) | 5 or more in 15 min | Check the source: it is evidence that the control works |
+| **Quality** | % of "not found" answers (log metric filter) | Over 40 % in 1 h | Run the golden set: possible parsing regression |
+| Cost | AWS Budgets | 80 % actual or 100 % forecasted of USD 10 per month | Tear down the stack or investigate the spend |
 
-Las alertas de **ataques** y **calidad** son las propias de un sistema de IA: un RAG puede estar 100 % disponible y responder mal.
+The **attacks** and **quality** alerts are specific to an AI system: a RAG can be 100 % available and still answer badly.
 
 ---
 
-## Decisiones de arquitectura
+## Architecture decisions
 
-Criterios, en orden de peso: (1) no responder con el manual equivocado, (2) respuesta trazable con cita, (3) usable desde el celular por alguien no técnico y (4) costo cercano a cero y destruible.
+Criteria, in order of weight: (1) never answer from the wrong manual, (2) traceable answer with a citation, (3) usable from a phone by a non-technical person and (4) near-zero cost and easy to destroy.
 
-| Decisión | Elegido | Descartado | Por qué |
+| Decision | Chosen | Ruled out | Why |
 | --- | --- | --- | --- |
-| RAG | Bedrock Knowledge Bases | Pipeline propio (LangChain) | Menos código y operación; el pipeline queda como configuración |
-| Vector store | **S3 Vectors** | OpenSearch Serverless | OpenSearch Serverless cobra un mínimo mensual aunque no se use `[verificar]`; S3 Vectors cobra por uso |
-| Parser | **Nova Lite (modelo con visión)** | Parser por defecto (solo texto) | El parser por defecto pierde las columnas de las tablas de mantenimiento. Costo: tokens por página, solo al ingerir |
-| Generador | **Nova 2 Lite** | Claude; Nova Pro | Lee imágenes, es barato y lo cubren los créditos de AWS. Se probó Nova Pro con el set dorado: no mejoró y atribuyó un dato de la cadena al aceite del motor, así que se revirtió |
-| Filtro por vehículo | Metadatos en cada fragmento, filtro antes de buscar | Un índice por vehículo | Un solo índice escala; el filtro garantiza que nunca entra otro manual |
-| Entrada | **CloudFront delante de todo** | Function URL pública | Un solo dominio, sin CORS, la Lambda no es alcanzable sin pasar por el borde, y ahí se pone WAF |
-| Alertas | Slack con Amazon Q Developer | Webhook + Lambda + Parameter Store | Igual de gratis, sin código ni secreto que cuidar |
-| Infraestructura | AWS CDK en Python, un archivo por carril | Una sola pila monolítica | Cada carril se lee y se explica por separado |
+| RAG | Amazon Bedrock Knowledge Bases | Custom pipeline (LangChain) | Less code and operations; the pipeline becomes configuration |
+| Vector store | **Amazon S3 Vectors** | Amazon OpenSearch Serverless | OpenSearch Serverless charges a monthly minimum even when idle `[to verify]`; S3 Vectors charges per use |
+| Parser | **Nova Lite (vision model)** | Default parser (text only) | The default parser loses the columns of the maintenance tables. Cost: tokens per page, only at ingestion |
+| Generator | **Nova 2 Lite** | Claude; Nova Pro | Reads images, is cheap and is covered by AWS credits. Nova Pro was tried against the golden set: it did not improve and it attributed a chain lubrication value to the engine oil, so it was reverted |
+| Vehicle filter | Metadata on each chunk, filter before searching | One index per vehicle | A single index scales; the filter guarantees no other manual gets in |
+| Entry point | **CloudFront in front of everything** | Public Function URL | One domain, no CORS, the Lambda function cannot be reached without going through the edge, and that is where WAF goes |
+| Alerts | Slack through Amazon Q Developer | Webhook + Lambda + Parameter Store | Equally free, no code or secret to look after |
+| Infrastructure | AWS CDK in Python, one file per lane | A single monolithic stack | Each lane can be read and explained on its own |
 
 ---
 
-## Controles de seguridad y gobierno
+## Security and governance controls
 
-Todos los controles viven **fuera del modelo**: se cumplen aunque el modelo se equivoque o lo manipulen.
+All controls live **outside the model**: they hold even if the model is wrong or manipulated.
 
-| Control | Dónde vive | Qué evita |
+| Control | Where it lives | What it prevents |
 | --- | --- | --- |
-| Filtro por vehículo antes de buscar | `handler.py`, `buscar()` | Responder con el manual de otro vehículo |
-| Sin vehículo identificado, se pregunta | `handler.py`, paso 1 | Adivinar el vehículo |
-| Guardrail en entrada y salida, con versión fija | `guardrail.py` | Prompt injection, insultos, datos personales en claro |
-| Grounding contextual sobre cada respuesta | `guardrail.py`, `handler.py` paso 6 | Respuestas con una cita real pero con un dato que no está en el fragmento |
-| Sin fragmentos, no se llama al modelo | `handler.py`, paso 5 | Respuestas sin fuente |
-| "No encontré" se responde solo, sin relleno | `handler.py` | Que el modelo complete con conocimiento propio |
-| Regla de seguridad en código, por síntomas (luces rojas, frenos, temperatura, fugas, ruidos) | `handler.py`, `TEMAS_SEGURIDAD` | Que "llévalo al taller" dependa del modelo, o que salga en cualquier pregunta y deje de servir |
-| IAM de mínimo privilegio por carril | Cada archivo de `infra_manuales/` | Que una pieza pueda hacer más de lo que necesita |
-| Buckets privados, SSE-S3, solo HTTPS | `fuente.py`, `web.py` | Acceso directo a los datos |
-| Lambda solo invocable por CloudFront (OAC, `AWS_IAM`) | `web.py` | Saltarse el borde |
-| Logs JSON por paso, una semana de retención | `handler.py`, `asistente.py` | No saber qué paso falló ni por qué |
+| Vehicle filter before searching | `handler.py`, `buscar()` | Answering from another vehicle's manual |
+| No identified vehicle, ask first | `handler.py`, step 1 | Guessing the vehicle |
+| Guardrail on input and output, pinned version | `guardrail.py` | Prompt injection, insults, personal data in clear text |
+| Contextual grounding on every answer | `guardrail.py`, `handler.py` step 6 | Answers with a real citation but a value that is not in the chunk |
+| No chunks, no model call | `handler.py`, step 5 | Answers without a source |
+| "Not found" is returned on its own, no filler | `handler.py` | The model filling in with its own knowledge |
+| Safety rule in code, based on symptoms (red lights, brakes, temperature, leaks, noises) | `handler.py`, `TEMAS_SEGURIDAD` | "Take it to a mechanic" depending on the model, or showing up on every question until nobody reads it |
+| Least-privilege IAM per lane | Each file in `infra_manuales/` | A component being able to do more than it needs |
+| Private buckets, SSE-S3, HTTPS only | `fuente.py`, `web.py` | Direct access to the data |
+| Lambda only invocable by CloudFront (OAC, `AWS_IAM`) | `web.py` | Bypassing the edge |
+| JSON logs per step, one-week retention | `handler.py`, `asistente.py` | Not knowing which step failed or why |
 
 ---
 
-## Lecciones aprendidas
+## Lessons learned
 
-Las cinco más importantes. La lista completa de los problemas que aparecieron, con síntoma, causa, solución y lección, está en la **[bitácora](docs/bitacora.md)**, incluidos los errores de diagnóstico.
+The five most important ones. The full list of problems that came up, with symptom, cause, fix and lesson, is in the **[engineering log](docs/bitacora.md)**, including the diagnosis mistakes.
 
-### 1. El parsing es la decisión más subestimada de un RAG
+### 1. Parsing is the most underestimated decision in a RAG
 
-La primera versión usaba el parser por defecto, que solo extrae texto. En el cuadro de mantenimiento de la Yamaha XTZ125, la fila *Aceite de motor* marca los kilómetros con chulos en columnas. El parser entregaba `Aceite de motor / Cambiar / √√√√√√`: las columnas se perdían y **ningún chunking ni embedding podía recuperarlas**. El asistente respondía, con razón, que no lo encontraba.
+The first version used the default parser, which only extracts text. In the Yamaha XTZ125 maintenance chart, the *Engine oil* row marks the kilometers with check marks in columns. The parser produced `Aceite de motor / Cambiar / √√√√√√` ("Engine oil / Change / √√√√√√"): the columns were lost and **no chunking or embedding could recover them**. The assistant answered, correctly, that it could not find it.
 
-**Solución:** un modelo con visión como parser, que lee la página como imagen.
+**Fix:** a vision model as the parser, which reads the page as an image.
 
-### 2. Las alucinaciones también pasan al ingerir
+### 2. Hallucinations also happen at ingestion
 
-El primer prompt del parser traía un ejemplo concreto ("Aceite de motor: cambiar a los 500 km, 3000 km..."). En la página del **índice alfabético**, Nova Lite copió el ejemplo y **inventó una tabla de aceite** que no existe. Ese fragmento falso era el primer resultado para "¿cada cuánto cambio el aceite?": el asistente habría citado "(pág. 89)" con total seguridad, y esa página es el índice.
+The first parser prompt included a concrete example ("Engine oil: change at 500 km, 3000 km..."). On the **alphabetical index** page, Nova Lite copied the example and **invented an oil table** that does not exist. That fake chunk was the top result for "how often do I change the oil?": the assistant would have cited "(p. 89)" with full confidence, and that page is the index.
 
-Se detectó **contrastando la cita con el PDF fuente**. Solución: un prompt sin ejemplos de contenido, que prohíbe inventar, y una reingesta completa con una fuente de datos nueva (la anterior se borra con sus vectores).
+It was caught by **checking the citation against the source PDF**. Fix: a prompt with no content examples that forbids inventing, and a full re-ingestion with a new data source (the old one is deleted along with its vectors).
 
-**Consecuencia para las pruebas:** el set dorado valida la **página citada**, no solo que la respuesta suene bien.
+**Consequence for testing:** the golden set checks the **cited page**, not just that the answer sounds right.
 
-### 3. Grounding no es lo mismo que completitud
+### 3. Grounding is not the same as completeness
 
-Con el parser corregido se agregó un **grounding contextual** en el guardrail: cada respuesta se compara con los fragmentos y, si afirma algo que no está, no se entrega. Los puntajes reales:
+With the parser fixed, **contextual grounding** was added to the guardrail: each answer is compared with the chunks and, if it states something that is not there, it is not delivered. The real scores:
 
-| Pregunta | Grounding | Resultado |
+| Question | Grounding | Result |
 | --- | --- | --- |
-| Luz roja de presión de aceite (Nissan Frontier) | 0,99 | Se entrega |
-| Cantidad de aceite (Yamaha XTZ125) | 0,87 | Se entrega: 1.00 L, pág. 50 |
-| Cada cuánto cambio el aceite (Yamaha XTZ125) | 0,92 | Se entrega: "cada 3000 km (pág. 44)" |
-| Trampa: pregunta de moto con la camioneta elegida | **0,49** | **Bloqueada**: se muestran las páginas para revisar |
+| Red oil pressure light (Nissan Frontier) | 0.99 | Delivered |
+| Oil capacity (Yamaha XTZ125) | 0.87 | Delivered: 1.00 L, p. 50 |
+| How often do I change the oil (Yamaha XTZ125) | 0.92 | Delivered: "every 3000 km (p. 44)" |
+| Trap: motorcycle question with the pickup truck selected | **0.49** | **Blocked**: the pages are shown for review |
 
-El caso del aceite muestra el límite del control: el cuadro de mantenimiento marca cambio a los **500**, 3000, 6000, 9000, 12000 y 15000 km. "Cada 3000 km" **está respaldado**, pero **omite el primer cambio a los 500 km**. El grounding mide que lo dicho esté en la fuente, no que esté completo.
+The oil case shows the limit of the control: the maintenance chart marks a change at **500**, 3000, 6000, 9000, 12000 and 15000 km. "Every 3000 km" **is supported**, but it **leaves out the first change at 500 km**. Grounding measures that what is said is in the source, not that it is complete.
 
-**Consecuencia:** el set dorado valida los datos esperados de cada respuesta (por ejemplo, "500 km" y "3000 km"), no solo que haya una cita.
+**Consequence:** the golden set checks the expected values of each answer (for example "500 km" and "3000 km"), not just that there is a citation.
 
-### 4. Un aviso que sale siempre deja de servir
+### 4. A warning that always shows up stops being useful
 
-La regla de "llévalo al taller" saltaba con la palabra *aceite*, incluso en "¿cuánta cantidad lleva?". Ahora se activa por **síntomas** en la pregunta o en la foto (luces rojas, frenos, temperatura, fugas, ruidos), no por la respuesta del modelo.
+The "take it to a mechanic" rule fired on the word *oil*, even for "how much oil does it take?". Now it fires on **symptoms** in the question or the photo (red lights, brakes, temperature, leaks, noises), not on the model's answer.
 
-### 5. El backend no debe ser alcanzable sin pasar por el borde
+### 5. The backend must not be reachable without going through the edge
 
-La primera versión exponía la Function URL de la Lambda como pública. Ahora CloudFront es la única puerta: la Lambda exige firma (`AWS_IAM`) y solo CloudFront firma (OAC). Para los `POST`, el navegador envía el SHA-256 del cuerpo en el header `x-amz-content-sha256`, como exige Lambda.
+The first version exposed the Lambda Function URL publicly. Now CloudFront is the only door: the Lambda function requires a signature (`AWS_IAM`) and only CloudFront signs (OAC). For `POST` requests, the browser sends the SHA-256 of the body in the `x-amz-content-sha256` header, as Lambda requires.
 
 ---
 
-## Estructura del repositorio
+## Repository layout
 
 ```
 .
-├── backend/handler.py            Lambda: los 5 pasos de cada pregunta, comentados
-├── web/index.html                SPA para el celular (vehículo, pregunta, foto)
-├── corpus/manuales.json          Catálogo: vehículo, metadatos y URL oficial del PDF
-├── pruebas/
-│   ├── set_dorado.json           10 preguntas con la respuesta verificada en el PDF
-│   ├── evaluar.py                Corre el set dorado contra la Lambda
-│   └── resultados.md             Último reporte
+├── backend/handler.py            Lambda: the steps of each question, commented
+├── web/index.html                Mobile SPA (vehicle, question, photo)
+├── corpus/manuales.json          Catalog: vehicle, metadata and official PDF URL
+├── pruebas/                      Tests
+│   ├── set_dorado.json           Golden set: 10 questions with the answer verified in the PDF
+│   ├── evaluar.py                Runs the golden set against the Lambda function
+│   └── resultados.md             Latest report (generated, in Spanish)
 ├── scripts/
-│   ├── descargar_manuales.py     Descarga los PDF y escribe sus metadatos
-│   └── ingestar.py               Lanza la ingesta y espera a que termine
-├── infra/                        AWS CDK en Python (uv)
+│   ├── descargar_manuales.py     Downloads the PDFs and writes their metadata
+│   └── ingestar.py               Starts the ingestion job and waits for it to finish
+├── infra/                        AWS CDK in Python (uv)
 │   ├── app.py
 │   └── infra_manuales/
-│       ├── stack.py              Índice: conecta los siete carriles
-│       ├── fuente.py             1. S3 con los PDF
+│       ├── stack.py              Index: wires the seven lanes together
+│       ├── fuente.py             1. S3 with the PDFs
 │       ├── vectores.py           2. S3 Vectors
-│       ├── conocimiento.py       3. Knowledge Base: parser, chunking, embeddings
+│       ├── conocimiento.py       3. Knowledge base: parser, chunking, embeddings
 │       ├── guardrail.py          4. Bedrock Guardrails
-│       ├── asistente.py          5. Lambda y sus permisos
-│       ├── web.py                6. CloudFront, SPA y Function URL con OAC
-│       └── alertas.py            7. Alarmas, presupuesto y Slack
+│       ├── asistente.py          5. Lambda function and its permissions
+│       ├── web.py                6. CloudFront, SPA and Function URL with OAC
+│       └── alertas.py            7. Alarms, budget and Slack
 └── docs/
-    ├── 00-inception.md           Inception (AI-DLC): intención, criterios, supuestos
-    ├── bitacora.md               Los problemas encontrados y cómo se resolvieron
-    ├── arquitectura.drawio       Diagrama editable
-    ├── arquitectura.png          Diagrama para este README
-    ├── flujo-rag.excalidraw      Flujo a mano alzada: deploy, ingesta, pregunta (editable)
-    └── flujo-rag.png             El mismo flujo, para este README
+    ├── 00-inception.md           Inception (AI-DLC): intent, criteria, assumptions
+    ├── bitacora.md               Engineering log: problems found and how they were solved
+    ├── arquitectura.drawio       Editable architecture diagram
+    ├── arquitectura.png          Architecture diagram for this README
+    ├── flujo-rag.excalidraw      Hand-drawn flow: deploy, ingestion, question (editable)
+    └── flujo-rag.png             The same flow, for this README
 ```
 
 ---
 
-## Desplegar
+## Deploy
 
-### Requisitos
+### Requirements
 
-- Cuenta de AWS con sesión en la CLI (`aws login` o un perfil) y acceso a Amazon Nova y Titan en Bedrock.
-- [uv](https://docs.astral.sh/uv/) y Node.js (para `npx cdk`).
-- Región: **us-east-1** (S3 Vectors, Nova 2 Lite y la integración con Knowledge Bases disponibles).
-- La cuenta con CDK bootstrap (`npx cdk bootstrap` una sola vez).
+- An AWS account with a CLI session (`aws login` or a profile) and access to Amazon Nova and Amazon Titan in Amazon Bedrock.
+- [uv](https://docs.astral.sh/uv/) and Node.js (for `npx cdk`).
+- Region: **us-east-1** (S3 Vectors, Nova 2 Lite and the Knowledge Bases integration are available there).
+- The account bootstrapped for CDK (`npx cdk bootstrap`, once).
+- **Access from outside Colombia:** the CloudFront distribution only serves requests from Colombia (`geo_restriction` in [`infra/infra_manuales/web.py`](infra/infra_manuales/web.py)). If you deploy from another country, change the country code in `GeoRestriction.allowlist("CO")` first, or the web app answers `403`.
 
-### Pasos
+### Configuration values
 
-**1. Descargar los manuales** desde el sitio oficial de cada fabricante:
+Nothing is read from a `.env` file. The account and credentials come from your AWS CLI session, and everything else is passed as CDK context (`--context key=value`). None of these values are stored in the repo.
+
+| Context key | Required | Example | Purpose |
+| --- | --- | --- | --- |
+| `region` | No (default `us-east-1`) | `us-east-1` | Region for the stack. The scripts in `scripts/` and `pruebas/` assume `us-east-1` |
+| `cuenta` | No | `123456789012` | Account ID. If omitted, CDK uses the account of the current CLI session |
+| `slack_workspace` | No | `T0123456789` | Slack workspace ID for alerts (Amazon Q Developer in chat applications) |
+| `slack_canal` | No | `C0123456789` | Slack channel ID for alerts |
+| `web_activa` | No | `false` | `false` disables the CloudFront distribution without deleting anything |
+
+Use `AWS_PROFILE=your-profile` (or `aws login`) to pick the credentials.
+
+### Steps
+
+**0. Clone the repository:**
+
+```bash
+git clone https://github.com/cr-montoya/vehicle-manual-rag.git
+cd vehicle-manual-rag
+```
+
+**1. Download the manuals** from each manufacturer's official site:
 
 ```bash
 uv run --project infra python scripts/descargar_manuales.py
 ```
 
-**2. (Opcional) Preparar Slack** para las alertas, una sola vez:
+**2. (Optional) Set up Slack** for alerts, once:
 
-1. En Slack, crea el canal `#alertas-manuales` y copia su ID (empieza por `C`), al final de los detalles del canal.
-2. En la consola de AWS (us-east-1), abre *Amazon Q Developer in chat applications*, elige *Configure new client* → *Slack* y autoriza tu workspace. Copia el *Workspace ID* (empieza por `T`).
-3. Invita la app de AWS al canal con `/invite`.
+1. In Slack, create a channel (for example `#alertas-manuales`) and copy its ID (it starts with `C`), shown at the bottom of the channel details.
+2. In the AWS console (us-east-1), open *Amazon Q Developer in chat applications*, choose *Configure new client* -> *Slack* and authorize your workspace. Copy the *Workspace ID* (it starts with `T`).
+3. Invite the AWS app to the channel with `/invite`.
 
-**3. Desplegar** desde `infra/`:
+**3. Deploy** from `infra/`:
 
 ```bash
 cd infra
-npx cdk deploy --context region=us-east-1 --context slack_workspace=T... --context slack_canal=C...
+npx cdk deploy --context region=us-east-1 --context slack_workspace=T0123456789 --context slack_canal=C0123456789
 ```
 
-Sin los IDs de Slack, las alarmas se crean igual pero nadie recibe el aviso. Los IDs no se guardan en el repo.
+Without the Slack IDs, the alarms are still created but nobody receives the notification.
 
-**4. Ingerir los manuales.** Tarda varios minutos, porque un modelo lee cada página:
+**4. Ingest the manuals.** It takes several minutes, because a model reads every page:
 
 ```bash
 uv run python ../scripts/ingestar.py
 ```
 
-La ingesta corre en AWS: el script solo consulta el estado y se puede cerrar.
+Ingestion runs in AWS: the script only polls the status and can be closed.
 
-**5. Abrir la web.** La URL sale al final del deploy como `UrlWeb`.
+**5. Open the web app.** The URL is printed at the end of the deploy as `UrlWeb`.
 
-### Apagar la web sin destruir nada
+### Turn the web app off without destroying anything
 
-La distribución de CloudFront solo atiende peticiones desde Colombia. Para dejarla deshabilitada (por ejemplo, de noche), sin borrar la Knowledge Base ni lo ingerido:
+To disable the CloudFront distribution (for example, overnight) without deleting the knowledge base or the ingested data:
 
 ```bash
 npx cdk deploy --context region=us-east-1 --context web_activa=false
 ```
 
-Para encenderla, el mismo comando sin `web_activa=false`. Cada cambio tarda unos minutos mientras CloudFront se propaga.
+To turn it back on, run the same command without `web_activa=false`. Each change takes a few minutes while CloudFront propagates.
 
-### Probar que las alertas llegan a Slack
+### Check that alerts reach Slack
 
 ```bash
 aws cloudwatch describe-alarms --region us-east-1 --query "MetricAlarms[].AlarmName"
-aws cloudwatch set-alarm-state --region us-east-1 --alarm-name NOMBRE --state-value ALARM --state-reason "Prueba de Slack"
+aws cloudwatch set-alarm-state --region us-east-1 --alarm-name ALARM_NAME --state-value ALARM --state-reason "Slack test"
 ```
 
 ---
 
-## Pruebas
+## Tests
 
-### Set dorado
+### Golden set
 
-Diez preguntas con la respuesta **verificada a mano contra el PDF**, incluidas tres trampas. Cada caso revisa el tipo de respuesta, los **datos esperados** (completitud), la página citada y el aviso de taller. Umbral: 9 de 10, con las trampas obligatorias.
+Ten questions with the answer **verified by hand against the PDF**, including three traps. Each case checks the answer type, the **expected values** (completeness), the cited page and the mechanic warning. Threshold: 9 out of 10, with all traps required to pass.
 
 ```bash
 uv run --project infra python pruebas/evaluar.py
 ```
 
-**Último resultado: 8 de 10, trampas 3 de 3. No pasa el umbral.** Reporte completo en [`pruebas/resultados.md`](pruebas/resultados.md); casos en [`pruebas/set_dorado.json`](pruebas/set_dorado.json).
+**Latest result: 8 out of 10, traps 3 out of 3. It does not meet the threshold.** Full report in [`pruebas/resultados.md`](pruebas/resultados.md) (generated by the evaluator, in Spanish); cases in [`pruebas/set_dorado.json`](pruebas/set_dorado.json).
 
-| Caso | Resultado | Por qué |
+| Case | Result | Why |
 | --- | --- | --- |
-| Cantidad de aceite, presión de llantas, capacidad del tanque | ✅ | Dato correcto con su página |
-| Carga en casa (manual en inglés) | ✅ | Responde en español: 220 a 250 V |
-| Luz roja de presión de aceite | ✅ | Detenerse y apagar, con aviso de taller |
-| Trampas: vehículo equivocado, fuera del manual, inyección | ✅ | No responde con otro manual, dice que no está, bloquea |
-| Cada cuánto cambio el aceite | ❌ | "Cada 3000 km": omite el primer cambio a los 500 km. Ni ajustar las instrucciones ni cambiar a Nova Pro lo arregló |
-| Aceite de la Pulsar (manual en inglés) | ❌ | La página con la especificación no está en el índice. Ahora falla de forma segura: dice que no lo encontró |
+| Oil capacity, tire pressure, fuel tank capacity | ✅ | Correct value with its page |
+| Home charging (English manual) | ✅ | Answers in Spanish: 220 to 250 V |
+| Red oil pressure light | ✅ | Stop and turn off the engine, with the mechanic warning |
+| Traps: wrong vehicle, outside the manual, injection | ✅ | Does not answer from another manual, says it is not there, blocks |
+| How often do I change the oil | ❌ | "Every 3000 km": leaves out the first change at 500 km. Neither adjusting the instructions nor switching to Nova Pro fixed it |
+| Pulsar engine oil (English manual) | ❌ | The page with the specification is not in the index. It now fails safely: it says it did not find it |
 
-Los dos fallos están analizados en la [bitácora](docs/bitacora.md) (problemas 19 a 23).
+Both failures are analyzed in the [engineering log](docs/bitacora.md) (problems 19 to 23).
 
-### Alertas
+### Alerts
 
-Alarma forzada a mano, entregada en Slack por Amazon Q Developer:
+Alarm forced by hand, delivered to Slack by Amazon Q Developer:
 
-![Alarma de CloudWatch en Slack](docs/evidencia/slack-alarma.png)
+![CloudWatch alarm in Slack](docs/evidencia/slack-alarma.png)
 
 ---
 
-## Costos
+## Costs
 
-Estimación para una demo con poco tráfico, en us-east-1 `[verificar con la calculadora de AWS]`:
+**This is an estimate, not a bill.** It uses AWS public on-demand prices for us-east-1 from the public [AWS Price List bulk files](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/index.json) (offer files published between 2026-11-09 and 2026-11-16, checked on **2026-11-16**), before taxes, credits and free tiers unless stated. Prices change; check the [AWS Pricing Calculator](https://calculator.aws/) before relying on them.
 
-| Concepto | Cuándo se paga | Estimado |
+### Assumptions
+
+| Assumption | Value | Basis |
 | --- | --- | --- |
-| Parsing con Nova Lite (~1.100 páginas) | Una vez por ingesta | ~USD 0,30 |
-| Embeddings con Titan | Una vez por ingesta | Centavos |
-| S3 Vectors y S3 | Mensual, por almacenamiento | Centavos |
-| Cada pregunta (Titan + Nova 2 Lite) | Por uso | Fracciones de centavo |
-| CloudFront, Lambda, CloudWatch | Por uso | Dentro del nivel gratuito para una demo |
+| Documents indexed | 6 PDFs, ~1,100 pages, ~100 MB | Corpus in `corpus/manuales.json`; page count from the ingestion run |
+| Chunks (vectors) | ~2,000 of 1024 float32 dimensions, ~6 KB each with text and metadata | 300-token chunks; one manual showed at least 58 chunks over 50 pages, rounded up for the whole corpus |
+| Parser tokens per page | ~1,500 input (page image + prompt), ~600 output | Estimate for a page image in Nova Lite |
+| Questions per month | **1,000**, 20 % with a dashboard photo | Low-traffic demo |
+| Tokens per question (Nova 2 Lite) | ~3,000 input (instructions + 8 chunks), ~150 output | 8 chunks of 300 tokens; output capped at 400 |
+| Photo description | ~1,400 input tokens (image), ~30 output | Output capped at 80 tokens |
+| Guardrail text units per question | 1 on input; ~11 on output (chunks + question + answer for grounding) | 1 text unit = up to 1,000 characters |
+| Lambda | 512 MB, ~6 s per question | Several sequential Bedrock calls |
 
-El presupuesto de AWS Budgets avisa al 80 % de USD 10 al mes. Ojo: el presupuesto cubre **toda la cuenta**, no solo esta demo.
+### Unit prices used (us-east-1, on-demand)
+
+| Item | Price |
+| --- | --- |
+| Nova 2 Lite (regional rate, assumed for the `us.` inference profile) | USD 0.33 / 1M input tokens, USD 2.75 / 1M output tokens |
+| Nova Lite (parser) | USD 0.06 / 1M input tokens, USD 0.24 / 1M output tokens |
+| Titan Text Embeddings V2 | USD 0.02 / 1M tokens |
+| Guardrails: content filters / sensitive information (PII) / contextual grounding | USD 0.15 / USD 0.10 / USD 0.10 per 1,000 text units |
+| S3 Vectors | USD 0.06 per GB-month stored, USD 0.20 per GB put, USD 2.50 per million queries (+ bytes processed, negligible here) |
+| Bedrock Knowledge Bases | No separate line item for `Retrieve` or ingestion in this setup: you pay for the models and the vector store it uses |
+| Lambda (x86) | USD 0.0000166667 per GB-second, USD 0.20 per million requests |
+| CloudWatch | USD 0.10 per standard alarm metric, USD 0.30 per custom metric, USD 0.50 per GB of logs ingested |
+| S3 Standard | USD 0.023 per GB-month |
+
+### Estimate
+
+| Item | When it is paid | Estimate (USD) |
+| --- | --- | --- |
+| Parsing with Nova Lite (~1,100 pages) | Once per full ingestion | ~0.26 |
+| Titan embeddings + S3 Vectors writes | Once per full ingestion | ~0.015 |
+| **One full ingestion** | **Once per change to the manuals** | **~0.28** |
+| Nova 2 Lite answers (incl. photos) | Per question | ~1.51 / month |
+| Guardrails (input + output with grounding) | Per question | ~1.60 / month |
+| Titan query embeddings + S3 Vectors queries | Per question | < 0.01 / month |
+| Lambda | Per question | ~0.05 / month (covered by the Lambda free tier) |
+| CloudFront | Per request | < 0.10 / month (covered by the CloudFront free tier) |
+| CloudWatch: 5 alarms (6 alarm metrics), 3 custom metrics, logs | Monthly | ~1.50 / month (covered by the CloudWatch free tier: 10 alarms, 10 custom metrics) |
+| S3 (PDFs, SPA) and S3 Vectors storage | Monthly | < 0.01 / month |
+| AWS Budgets (no actions), SNS, Amazon Q Developer in chat applications | Monthly | 0 |
+| **Total for 1,000 questions** | | **~4.70 / month at list price, ~3.10 / month with the always-free tiers above**, plus ~0.28 per re-ingestion |
+| **Idle month (no questions)** | | **~1.50 at list price, < 0.01 with the free tiers** |
+
+Roughly **USD 0.003 per question**, and it scales linearly: 10,000 questions per month would be about USD 31 in Bedrock and guardrails. Two observations for other builders:
+
+- **Guardrails cost about as much as the model.** This estimate assumes contextual grounding is billed on the text units of the grounding source (the 8 chunks) as well as the answer, which makes the output check the largest guardrail cost. Fewer or shorter chunks lower both the model and the guardrail cost.
+- **The inference profile changes the token price.** The Price List shows Nova 2 Lite at USD 0.33 / 2.75 per 1M tokens at the regional rate and USD 0.30 / 2.50 through the global cross-region profile, about 9 % cheaper, if routing outside the US is acceptable for your data. The estimate uses the regional rate for the `us.` profile the stack calls.
+
+Nothing in the stack has a monthly minimum, which is why S3 Vectors was chosen over OpenSearch Serverless. The AWS Budgets alert fires at 80 % of USD 10 per month. Note: the budget covers **the whole account**, not just this demo.
 
 ---
 
-## Destruir
+## Tear down
 
 ```bash
 cd infra
 npx cdk destroy --context region=us-east-1
 ```
 
-Todo tiene política `DESTROY`: buckets (se vacían solos), índice de vectores, Knowledge Base, guardrail, Lambda, CloudFront, alarmas, presupuesto y la integración con Slack. La autorización del workspace de Slack en la consola de AWS se borra a mano si ya no se usa.
+Everything has a `DESTROY` policy: buckets (emptied automatically), vector index, knowledge base, guardrail, Lambda function, CloudFront, alarms, budget and the Slack integration. The Slack workspace authorization in the AWS console has to be removed by hand if you no longer use it.
 
 ---
 
-## Manuales y derechos de autor
+## Manuals and copyright
 
-Los manuales tienen derechos de autor de sus fabricantes. Que se puedan descargar gratis no da permiso para redistribuirlos, por eso **este repositorio no contiene ningún PDF**: [`scripts/descargar_manuales.py`](scripts/descargar_manuales.py) los baja desde la URL oficial que está en [`corpus/manuales.json`](corpus/manuales.json), y `corpus/pdf/` está en `.gitignore`.
+The manuals are copyrighted by their manufacturers. Being free to download does not grant permission to redistribute them, so **this repository does not contain any PDF**: [`scripts/descargar_manuales.py`](scripts/descargar_manuales.py) downloads them from the official URL listed in [`corpus/manuales.json`](corpus/manuales.json), and `corpus/pdf/` is in `.gitignore`.
 
-| Vehículo | Fuente |
+| Vehicle | Source |
 | --- | --- |
-| Honda Wave 110i (2015) | Sitio oficial de Honda Motos España |
-| Nissan Frontier (2023) | Sitio oficial de Nissan México |
-| Yamaha XTZ125 y XTZ250 | Sitio oficial de Incolmotos Yamaha (Colombia) |
-| Bajaj Pulsar NS125 | Sitio oficial de Bajaj Auto (distribuida en Colombia por Auteco) |
-| BYD Seagull | Sitio oficial de BYD (edición Marruecos; en Colombia se vende como Dolphin Mini `[verificar]`) |
+| Honda Wave 110i (2015) | Official Honda Motos Spain website |
+| Nissan Frontier (2023) | Official Nissan Mexico website |
+| Yamaha XTZ125 and XTZ250 | Official Incolmotos Yamaha (Colombia) website |
+| Bajaj Pulsar NS125 | Official Bajaj Auto website (distributed in Colombia by Auteco) |
+| BYD Seagull | Official BYD website (Morocco edition; sold in Colombia as Dolphin Mini `[to verify]`) |
 
-Esta es una demo educativa: no reemplaza el manual ni la revisión de un técnico.
+This is an educational demo: it does not replace the manual or an inspection by a mechanic.
+
+---
+
+## License
+
+The **code** in this repository is licensed under the [MIT License](LICENSE).
+
+The license covers the code only. It does **not** cover the vehicle manuals, which belong to their manufacturers and are not redistributed here, nor any text quoted from them.
