@@ -10,7 +10,7 @@ La Knowledge Base de Bedrock lee esos archivos y guarda tipo, marca, modelo y a�
 junto a cada fragmento. Con eso la búsqueda filtra por vehículo ANTES de comparar
 vectores, que es el control contra "responder con el manual equivocado".
 
-Uso (desde fase0-manuales/):
+Uso (desde la raíz del repo):
     uv run --project infra python scripts/descargar_manuales.py
 """
 

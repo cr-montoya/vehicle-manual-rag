@@ -5,7 +5,7 @@ fragmento en un vector con Titan y guardarlo en S3 Vectors con sus metadatos.
 Se corre después de cada `cdk deploy` que cambie los manuales (como un paso
 de pipeline: desplegar la infraestructura y luego cargar los datos).
 
-Uso (desde fase0-manuales/):
+Uso (desde la raíz del repo):
     uv run --project infra python scripts/ingestar.py
 """
 
